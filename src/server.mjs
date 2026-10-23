@@ -106,6 +106,7 @@ export async function buildServer(opts = {}) {
         if (req.method !== "POST") return json(res, 405, { error: "POST_required" }, { allow: "POST" });
         return mcp(body, req, res);
       }
+      if (req.method === "POST" && url.pathname === "/api/onboard") return json(res, 201, await store.joinApp(body));
       if (url.pathname.startsWith("/api/agent/")) {
         const bits = url.pathname.split("/");
         const id = bits[3];
@@ -119,6 +120,7 @@ export async function buildServer(opts = {}) {
       if (url.pathname.startsWith("/api/") && !security.verify(security.bearer(req), needed)) return security.unauthorized(res, needed);
       if (req.method === "GET" && url.pathname === "/api/apps") return json(res, 200, { apps: store.listApps(Boolean(config.legacyUrl)) });
       if (req.method === "POST" && url.pathname === "/api/apps") return json(res, 201, await store.registerApp(body));
+      if (req.method === "POST" && url.pathname === "/api/invites") return json(res, 201, await store.createInvite());
       if (req.method === "POST" && url.pathname === "/api/tasks") return json(res, 201, { task: await store.submit({ ...body, source: "api", legacy: Boolean(config.legacyUrl) }) });
       if (req.method === "POST" && url.pathname === "/api/chat") return json(res, 200, await ai.chat(body.message));
       const taskMatch = /^\/api\/tasks\/([a-f0-9]{36})(?:\/(approve|cancel))?$/.exec(url.pathname);

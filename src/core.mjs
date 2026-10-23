@@ -17,7 +17,7 @@ const MAX_RESULT = 12000;
 export class Store {
   constructor(file) {
     this.file = file;
-    this.state = { apps: {}, jobs: {}, clients: {}, codes: {}, refresh: {}, version: 1 };
+    this.state = { apps: {}, jobs: {}, clients: {}, codes: {}, refresh: {}, invites: {}, version: 1 };
     this.lock = Promise.resolve();
   }
   async init() {
@@ -66,6 +66,31 @@ export class Store {
     const app = { id: uid(), name, capabilities: capabilities.map(c => ({ name: c.name, readOnly: c.readOnly, description: clean(c.description, 150) })), secret_hash: hash(secret), registered_at: now(), last_seen: null };
     await this.change(s => {
       if (Object.keys(s.apps).length >= 100) throw Error("app_limit");
+      s.apps[app.id] = app;
+    });
+    return { id: app.id, name, secret, capabilities: app.capabilities };
+  }
+  async createInvite() {
+    const secret = "chkinvite_" + randomBytes(24).toString("base64url");
+    const expires = now() + 15 * 60000;
+    await this.change(s => {
+      for (const [key, value] of Object.entries(s.invites)) if (value.expires < now()) delete s.invites[key];
+      s.invites[hash(secret)] = { expires };
+    });
+    return { invite: secret, expires_at: new Date(expires).toISOString(), one_time: true };
+  }
+  async joinApp(input) {
+    const name = clean(input.name, 80);
+    const capabilities = input.capabilities;
+    if (!name || !Array.isArray(capabilities) || capabilities.length > 80 ||
+        capabilities.some(c => !c || typeof c.name !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(c.name) || typeof c.readOnly !== "boolean")) throw Error("invalid_registration");
+    const secret = "chkapp_" + randomBytes(32).toString("base64url");
+    const app = { id: uid(), name, capabilities: capabilities.map(c => ({ name: c.name, readOnly: c.readOnly, description: clean(c.description, 150) })), secret_hash: hash(secret), registered_at: now(), last_seen: null };
+    await this.change(s => {
+      const invite = s.invites[hash(String(input.invite || ""))];
+      if (!invite || invite.expires < now()) throw Error("invalid_invite");
+      if (Object.keys(s.apps).length >= 100) throw Error("app_limit");
+      delete s.invites[hash(input.invite)];
       s.apps[app.id] = app;
     });
     return { id: app.id, name, secret, capabilities: app.capabilities };
@@ -156,7 +181,7 @@ export class Store {
     await this.change(s => {
       const job = s.jobs[id];
       if (!job || job.app_id !== "chk-legacy") throw Error("not_legacy_job");
-      if (job.state !== "queued" && !(state === "unknown" && job.state === "leased")) throw Error("invalid_legacy_state");
+      if (job.state !== "queued" && !(job.state === "leased" && ["completed", "failed", "unknown"].includes(state))) throw Error("invalid_legacy_state");
       job.state = state;
       job.result = value;
       job.updated_at = now();
