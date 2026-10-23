@@ -2,7 +2,7 @@
 // Each installed application is enabled independently in chk_uc_apps.
 // No tokens/endpoints are returned to MCP clients. Read-only by default.
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
-import { CONSOLE_HTML, CONSOLE_JS } from "./console.ts";
+
 
 const PROJECT_URL = Deno.env.get("SUPABASE_URL") || "";
 const KEY = (() => {
@@ -14,7 +14,9 @@ const supabase = createClient(PROJECT_URL, KEY, {
   auth: { persistSession: false, autoRefreshToken: false }
 });
 const SERVICE = "CHK Universal Control - Supabase";
-const VERSION = "0.3.0-edge";
+const VERSION = "0.3.1-edge";
+const DASHBOARD_ORIGIN = "https://chasmet.github.io";
+const DASHBOARD_URL = DASHBOARD_ORIGIN + "/CHK-serveur-Universal-Control/";
 const MAX_BODY = 32 * 1024;
 const MAX_UPSTREAM_BODY = 96 * 1024;
 const APP_ID = /^[a-z0-9][a-z0-9-]{1,47}$/;
@@ -157,7 +159,7 @@ async function executeApp(args: Record<string, unknown>) {
 async function adminRoute(req: Request): Promise<Response> {
   if (req.method !== "POST") return http(405, { error: "post_required" });
   const origin = req.headers.get("origin");
-  if (origin && origin !== new URL(req.url).origin) return http(403, { error: "origin_forbidden" });
+  if (origin && origin !== new URL(req.url).origin && origin !== DASHBOARD_ORIGIN) return http(403, { error: "origin_forbidden" });
   const authorization = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.get("authorization") || "");
   if (!authorization || !(await authorized(authorization[1], "admin"))) {
     return http(401, { error: "admin_auth_required" });
@@ -228,18 +230,26 @@ Deno.serve(async (req: Request) => {
     return http(200, { service: SERVICE, version: VERSION, hosting: "supabase-edge", online: true, model_running_here: false });
   }
   if (req.method === "GET" && pathname.endsWith("/console")) {
-    return new Response(CONSOLE_HTML, {
-      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
-        "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
-        "x-frame-options": "DENY", "referrer-policy": "no-referrer" }
-    });
+    return new Response(null, { status: 302, headers: { location: DASHBOARD_URL, "cache-control": "no-store" } });
   }
-  if (req.method === "GET" && pathname.endsWith("/console.js")) {
-    return new Response(CONSOLE_JS, { headers: {
-      "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store",
-      "x-content-type-options": "nosniff" } });
+  if (pathname.endsWith("/admin")) {
+    const origin = req.headers.get("origin");
+    if (req.method === "OPTIONS") {
+      if (origin !== DASHBOARD_ORIGIN) return http(403, { error: "origin_forbidden" });
+      return new Response(null, { status: 204, headers: {
+        "access-control-allow-origin": DASHBOARD_ORIGIN,
+        "access-control-allow-methods": "POST,OPTIONS",
+        "access-control-allow-headers": "authorization, content-type",
+        "access-control-max-age": "3600", "vary": "Origin"
+      } });
+    }
+    const response = await adminRoute(req);
+    if (origin === DASHBOARD_ORIGIN) {
+      response.headers.set("access-control-allow-origin", DASHBOARD_ORIGIN);
+      response.headers.set("vary", "Origin");
+    }
+    return response;
   }
-  if (pathname.endsWith("/admin")) return adminRoute(req);
   const match = PATH_CAP.exec(pathname);
   if (!match) return http(404, { error: "not_found" });
   if (req.method !== "POST") return http(405, { error: "post_required" }, { allow: "POST" });
