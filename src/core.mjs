@@ -125,7 +125,7 @@ export class Store {
   }
   publicJob(job) {
     if (!job || !jobStates.has(job.state)) return null;
-    return { id: job.id, app_id: job.app_id, action: job.action, state: job.state, created_at: job.created_at, updated_at: job.updated_at, result: job.result, request_id: job.request_id };
+    return { id: job.id, app_id: job.app_id, action: job.action, args: job.args, state: job.state, created_at: job.created_at, updated_at: job.updated_at, result: job.result, request_id: job.request_id };
   }
   getJob(id) { return this.publicJob(this.state.jobs[id]); }
   listJobs() { return Object.values(this.state.jobs).sort((a,b) => b.created_at-a.created_at).slice(0,100).map(job => this.publicJob(job)); }
