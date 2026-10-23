@@ -2,6 +2,7 @@
 // Each installed application is enabled independently in chk_uc_apps.
 // No tokens/endpoints are returned to MCP clients. Read-only by default.
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
+import { CONSOLE_HTML, CONSOLE_JS } from "./console.ts";
 
 const PROJECT_URL = Deno.env.get("SUPABASE_URL") || "";
 const KEY = (() => {
@@ -13,7 +14,7 @@ const supabase = createClient(PROJECT_URL, KEY, {
   auth: { persistSession: false, autoRefreshToken: false }
 });
 const SERVICE = "CHK Universal Control - Supabase";
-const VERSION = "0.2.0-edge";
+const VERSION = "0.3.0-edge";
 const MAX_BODY = 32 * 1024;
 const MAX_UPSTREAM_BODY = 96 * 1024;
 const APP_ID = /^[a-z0-9][a-z0-9-]{1,47}$/;
@@ -75,10 +76,10 @@ async function digest(value: string) {
   const raw = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(raw)].map(x => x.toString(16).padStart(2, "0")).join("");
 }
-async function authorized(cap: string) {
+async function authorized(cap: string, role: "mcp" | "admin" = "mcp") {
   const hashed = await digest(cap);
   const { data, error } = await supabase.from("chk_uc_access")
-    .select("id").eq("secret_hash", hashed).eq("active", true).limit(1).maybeSingle();
+    .select("id").eq("secret_hash", hashed).eq("active", true).eq("role", role).limit(1).maybeSingle();
   if (error) throw new Error("auth_storage_unavailable");
   return !!data;
 }
@@ -153,6 +154,69 @@ async function executeApp(args: Record<string, unknown>) {
     clearTimeout(timeout);
   }
 }
+async function adminRoute(req: Request): Promise<Response> {
+  if (req.method !== "POST") return http(405, { error: "post_required" });
+  const origin = req.headers.get("origin");
+  if (origin && origin !== new URL(req.url).origin) return http(403, { error: "origin_forbidden" });
+  const authorization = /^Bearer ([a-f0-9]{64})$/.exec(req.headers.get("authorization") || "");
+  if (!authorization || !(await authorized(authorization[1], "admin"))) {
+    return http(401, { error: "admin_auth_required" });
+  }
+  if (isOversize(req)) return http(413, { error: "request_too_large" });
+  try {
+    const raw = await req.text();
+    if (raw.length > MAX_BODY) return http(413, { error: "request_too_large" });
+    const body = JSON.parse(raw);
+    const op = body?.operation;
+    if (op === "apps_list") {
+      const { data, error } = await supabase.from("chk_uc_apps")
+        .select("id,name,enabled,allow_writes,read_tools,write_tools,created_at,updated_at").order("name");
+      if (error) throw new Error("app_registry_unavailable");
+      return http(200, { apps: data || [] });
+    }
+    if (op === "app_register") {
+      const id = body.id, name = body.name, endpoint = body.endpoint, read = body.read_tools;
+      if (typeof id !== "string" || !APP_ID.test(id) ||
+          typeof name !== "string" || !name.trim() || name.length > 100 ||
+          typeof endpoint !== "string" || !safeEndpoint(endpoint) ||
+          !Array.isArray(read) || read.length < 1 || read.length > 40 ||
+          read.some(x => typeof x !== "string" || !TOOL_NAME.test(x))) {
+        return http(400, { error: "invalid_application_parameters" });
+      }
+      const { error } = await supabase.from("chk_uc_apps").insert({
+        id, name: name.trim(), endpoint,
+        enabled: false, read_tools: [...new Set(read)],
+        write_tools: [], allow_writes: false
+      });
+      if (error?.code === "23505") return http(409, { error: "application_already_exists" });
+      if (error) throw new Error("app_registry_write_failed");
+      return http(201, { registered: true, id, enabled: false, writes_enabled: false });
+    }
+    if (op === "app_toggle") {
+      if (typeof body.app_id !== "string" || !APP_ID.test(body.app_id) ||
+          typeof body.enabled !== "boolean") return http(400, { error: "invalid_toggle" });
+      const { data, error } = await supabase.from("chk_uc_apps")
+        .update({ enabled: body.enabled, updated_at: new Date().toISOString() })
+        .eq("id", body.app_id).select("id,name,enabled,allow_writes").maybeSingle();
+      if (error) throw new Error("app_update_failed");
+      if (!data) return http(404, { error: "unknown_application" });
+      return http(200, { app: data });
+    }
+    if (op === "app_read") {
+      const app = await getApp(body.app_id);
+      if (!app.enabled) return http(403, { error: "application_disabled" });
+      if (!app.read_tools.includes(body.tool)) return http(403, { error: "read_tool_not_allowed" });
+      const output = await executeApp({
+        app_id: app.id, tool: body.tool, arguments: {}
+      });
+      return http(200, { app_id: app.id, tool: body.tool, response: output });
+    }
+    return http(400, { error: "unknown_admin_operation" });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "internal_error";
+    return http(400, { error: /^(invalid_|unknown_|application_|app_|read_|upstream_)/.test(message) ? message : "admin_operation_failed" });
+  }
+}
 function isOversize(req: Request) {
   const length = req.headers.get("content-length");
   return length !== null && Number(length) > MAX_BODY;
@@ -163,6 +227,19 @@ Deno.serve(async (req: Request) => {
   if (req.method === "GET" && pathname.endsWith("/healthcheck")) {
     return http(200, { service: SERVICE, version: VERSION, hosting: "supabase-edge", online: true, model_running_here: false });
   }
+  if (req.method === "GET" && pathname.endsWith("/console")) {
+    return new Response(CONSOLE_HTML, {
+      headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
+        "content-security-policy": "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+        "x-frame-options": "DENY", "referrer-policy": "no-referrer" }
+    });
+  }
+  if (req.method === "GET" && pathname.endsWith("/console.js")) {
+    return new Response(CONSOLE_JS, { headers: {
+      "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store",
+      "x-content-type-options": "nosniff" } });
+  }
+  if (pathname.endsWith("/admin")) return adminRoute(req);
   const match = PATH_CAP.exec(pathname);
   if (!match) return http(404, { error: "not_found" });
   if (req.method !== "POST") return http(405, { error: "post_required" }, { allow: "POST" });
