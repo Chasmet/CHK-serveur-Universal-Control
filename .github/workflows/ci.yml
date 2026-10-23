@@ -21,3 +21,13 @@ jobs:
         run: npm run check
       - name: Unit and integration tests
         run: npm test
+
+  deno-edge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Validate hosted Supabase MCP
+        run: deno check supabase/functions/chk-universal-mcp/index.ts
