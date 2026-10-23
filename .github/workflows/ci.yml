@@ -30,4 +30,4 @@ jobs:
         with:
           deno-version: v2.x
       - name: Validate hosted Supabase MCP
-        run: deno check supabase/functions/chk-universal-mcp/index.ts
+        run: deno check --config supabase/functions/chk-universal-mcp/deno.json supabase/functions/chk-universal-mcp/index.ts
