@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CHK Universal Control</title><style>
+:root{color-scheme:dark;font-family:system-ui,-apple-system,Arial,sans-serif;background:#0b1020;color:#f2f5fc}
+*{box-sizing:border-box}body{margin:0}main{max-width:920px;margin:auto;padding:20px}
+header{display:flex;align-items:center;justify-content:space-between;gap:15px}
+h1{font-size:1.6rem;margin:4px 0}h2{font-size:1.2rem;margin:5px 0}p,small{color:#b5c2d8}
+.tag{padding:6px 12px;border-radius:99px;background:#24314c;color:#dce8fe}
+.card{background:#17223a;border:1px solid #364460;border-radius:16px;padding:18px;margin:18px 0}
+label{display:block;font-size:.92rem;margin:12px 0 4px;color:#ced8ee}
+input,button,select,textarea{font:inherit;max-width:100%;border-radius:10px;padding:11px}
+input,textarea{width:100%;background:#0e1629;color:#fff;border:1px solid #455775}
+button{background:#2563eb;border:0;color:white;cursor:pointer;font-weight:600}
+button:disabled{opacity:.5}button.secondary{background:#34415b}
+button.warning{background:#9b3e3e}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(265px,1fr));gap:12px}
+.app{background:#0d172a;border:1px solid #3a4d69;border-radius:12px;padding:14px}
+.app h3{margin:0}.app small{display:block;margin:7px 0}pre{background:#070e1b;border:1px solid #293953;color:#d8e3fc;padding:15px;white-space:pre-wrap;word-break:break-word;border-radius:10px;max-height:300px;overflow:auto}
+.hidden{display:none} .subtle{font-size:.8rem}a{color:#87baff}
+</style></head><body><main>
+<header><div><h1>CHK Universal Control</h1><p>Centre de commande MCP multi-applications</p></div><span id="state" class="tag">Verrouillé</span></header>
+<section class="card" id="login"><h2>Accès administrateur</h2>
+<p>Entre la clé administrateur créée dans Supabase. Elle reste uniquement dans la mémoire de cet onglet et n'est pas stockée sur ton téléphone.</p>
+<form id="signin"><label for="secret">Clé administrateur (64 caractères)</label>
+<input type="password" id="secret" autocomplete="off" spellcheck="false" required placeholder="Clé privée"><button type="submit">Ouvrir le contrôle</button></form></section>
+<div id="content" class="hidden">
+<section class="card"><div class="row"><h2 style="flex:1">Applications</h2><button id="refresh" class="secondary">Actualiser</button><button id="logout" class="secondary">Déconnexion</button></div>
+<p>Chaque application possède son propre adaptateur MCP. Les écritures restent désactivées et ne peuvent pas être activées depuis cette interface.</p><div id="apps" class="grid"></div></section>
+<section class="card"><h2>Ajouter une application</h2><p>Enregistrement séparé : aucune ancienne route n'est modifiée.</p>
+<form id="register"><div class="grid"><div><label for="app-id">Identifiant</label><input id="app-id" required pattern="[a-z0-9][a-z0-9-]{1,47}" placeholder="remix-studio"></div>
+<div><label for="app-name">Nom de l'application</label><input id="app-name" required maxlength="100" placeholder="Remix Studio"></div></div>
+<label for="endpoint">Adresse HTTPS du serveur MCP de cette application</label><input id="endpoint" type="url" required placeholder="https://mon-service.onrender.com/mcp/..." autocomplete="off">
+<label for="readtools">Outils de consultation autorisés (séparés par virgule)</label><input id="readtools" required placeholder="server_info,status">
+<button type="submit">Enregistrer (désactivée par défaut)</button></form></section>
+<section class="card"><h2>Résultat d'exécution</h2><pre id="result" aria-live="polite">Sélectionne une application et un outil de consultation.</pre></section>
+<section class="card"><h2>Connexion ChatGPT</h2><p>Le serveur MCP central utilise une <b>clé de connexion distincte</b> de cette clé administrateur. Ajoute-le dans les Plugins ChatGPT. Le modèle open source Qwen nécessite un moteur Ollama hébergé à part.</p>
+<a href="https://github.com/Chasmet/CHK-serveur-Universal-Control" target="_blank" rel="noopener noreferrer">Voir le code GitHub et la documentation</a></section>
+</div></main><script src="./console.js"></script></body></html>
