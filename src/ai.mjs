@@ -3,7 +3,7 @@ const definitions = [
   { type: "function", function: { name: "list_apps", description: "List registered applications and their available capabilities", parameters: { type: "object", properties: {} } } },
   { type: "function", function: { name: "submit_task", description: "Submit a command to an application. Write actions need user approval; never claim completion without status.", parameters: { type: "object", required: ["app_id", "action"], properties: {
     app_id: { type: "string" }, action: { type: "string" }, args: { type: "object" }, request_id: { type: "string" }
-  } } },
+  } } } },
   { type: "function", function: { name: "task_status", description: "Check a task status and its actual result", parameters: { type: "object", required: ["task_id"], properties: { task_id: { type: "string" } } } }
 ];
 export function createAI(config, store) {
