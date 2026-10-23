@@ -41,6 +41,7 @@ test("health, protected MCP, JSON-RPC discovery", async t => {
   assert.equal((await rpc("initialize", { protocolVersion: "2025-06-18" })).serverInfo.name, "CHK Universal Control");
   const list = await rpc("tools/list");
   assert.ok(list.tools.some(tool => tool.name === "app_invite"));
+  assert.ok(!list.tools.some(tool => tool.name === "task_approve"));
   assert.ok(list.tools.every(tool => tool.securitySchemes?.length));
   assert.equal((await request("/mcp")).status, 405);
 });

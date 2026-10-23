@@ -48,7 +48,9 @@ Le modèle nécessite de la mémoire et du calcul sur la machine qui exécute Ol
 4. L'application interroge GET /api/agent/ID/poll avec sa clé Bearer, puis poste le résultat à POST /api/agent/ID/result.
 5. ChatGPT découvre automatiquement l'application via apps_list.
 
-Les applications existantes doivent intégrer ce protocole pour pouvoir recevoir de nouvelles commandes. Leurs anciens mécanismes de mise à jour APK restent séparés.
+Les applications existantes doivent intégrer ce protocole pour pouvoir recevoir de nouvelles commandes.
+
+Les tâches en attente de validation se consultent et s'approuvent dans l'interface /chat, via le bouton Tâches. Le chatbot et ChatGPT ne disposent pas de l'outil d'approbation directe : cette opération exige un geste de l'utilisateur connecté. Leurs anciens mécanismes de mise à jour APK restent séparés.
 
 ## ChatGPT et déploiement
 

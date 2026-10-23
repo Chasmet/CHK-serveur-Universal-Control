@@ -121,6 +121,7 @@ export async function buildServer(opts = {}) {
       if (req.method === "GET" && url.pathname === "/api/apps") return json(res, 200, { apps: store.listApps(Boolean(config.legacyUrl)) });
       if (req.method === "POST" && url.pathname === "/api/apps") return json(res, 201, await store.registerApp(body));
       if (req.method === "POST" && url.pathname === "/api/invites") return json(res, 201, await store.createInvite());
+      if (req.method === "GET" && url.pathname === "/api/tasks") return json(res, 200, { tasks: store.listJobs() });
       if (req.method === "POST" && url.pathname === "/api/tasks") return json(res, 201, { task: await store.submit({ ...body, source: "api", legacy: Boolean(config.legacyUrl) }) });
       if (req.method === "POST" && url.pathname === "/api/chat") return json(res, 200, await ai.chat(body.message));
       const taskMatch = /^\/api\/tasks\/([a-f0-9]{36})(?:\/(approve|cancel))?$/.exec(url.pathname);

@@ -1,18 +1,10 @@
-// Ollama is optional. Inference runs outside Supabase Edge.
-function defineTool(name, description, parameters) {
-  return { type: "function", function: { name, description, parameters } };
-}
+// Ollama is optional. Inference runs on a separate machine/Android, never inside Supabase Edge.
 const definitions = [
-  defineTool("list_apps", "List registered applications and their available capabilities", { type: "object", properties: {} }),
-  defineTool("submit_task", "Submit a task. A write action needs approval; never claim completion before a worker result.", {
-    type: "object", required: ["app_id", "action"], properties: {
-      app_id: { type: "string" }, action: { type: "string" },
-      args: { type: "object" }, request_id: { type: "string" }
-    }
-  }),
-  defineTool("task_status", "Check a task status and its actual result", {
-    type: "object", required: ["task_id"], properties: { task_id: { type: "string" } }
-  })
+  { type: "function", function: { name: "list_apps", description: "List registered applications and their available capabilities", parameters: { type: "object", properties: {} } } },
+  { type: "function", function: { name: "submit_task", description: "Submit a command to an application. Write actions need user approval; never claim completion without status.", parameters: { type: "object", required: ["app_id", "action"], properties: {
+    app_id: { type: "string" }, action: { type: "string" }, args: { type: "object" }, request_id: { type: "string" }
+  } } },
+  { type: "function", function: { name: "task_status", description: "Check a task status and its actual result", parameters: { type: "object", required: ["task_id"], properties: { task_id: { type: "string" } } } }
 ];
 export function createAI(config, store) {
   async function chat(input) {

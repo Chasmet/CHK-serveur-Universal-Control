@@ -52,3 +52,24 @@ $("apps").onclick = async () => {
   try { const response = await request("/api/apps"); line("Applications enregistrées", response.apps); }
   catch (error) { notice(error.message); }
 };
+
+$("tasks").onclick = async () => {
+  try {
+    const tasks = (await request("/api/tasks")).tasks;
+    line("Tâches et statuts", tasks);
+    for (const task of tasks.filter(item => item.state === "pending_approval")) {
+      const btn = document.createElement("button");
+      btn.textContent = "Approuver " + task.action + " / " + task.app_id + " (" + task.id.slice(0, 8) + ")";
+      btn.style.margin = "8px";
+      btn.onclick = async () => {
+        if (!window.confirm("Autoriser cette action ?\n" + JSON.stringify({ app_id: task.app_id, action: task.action, args: (task.args || "non affichés") }, null, 2))) return;
+        try {
+          const outcome = await request("/api/tasks/" + task.id + "/approve", {});
+          line("Validation effectuée", outcome.task);
+          btn.disabled = true;
+        } catch (e) { notice(e.message); }
+      };
+      $("messages").appendChild(btn);
+    }
+  } catch (error) { notice(error.message); }
+};
