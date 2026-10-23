@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CHK AI CORE</title>
+<style>
+:root{color-scheme:dark;font:16px system-ui,sans-serif;background:#0b1020;color:#e7eaf4}*{box-sizing:border-box}
+main{max-width:780px;margin:auto;padding:20px}header{display:flex;align-items:center;justify-content:space-between}
+h1{font-size:1.3rem}p{color:#aebbd2}.panel{background:#18213a;border:1px solid #34415d;border-radius:15px;padding:18px;margin:12px 0}
+input,textarea,button{font:inherit;border:1px solid #475878;border-radius:10px;padding:12px;background:#10172b;color:white}
+input,textarea{width:100%}button{background:#2563eb;border:0;cursor:pointer}button:disabled{opacity:.55}textarea{min-height:98px;resize:vertical}
+#messages{min-height:180px;max-height:50vh;overflow:auto;white-space:pre-wrap;line-height:1.5}
+.line{border-bottom:1px solid #33425c;padding:12px 0;overflow-wrap:anywhere}.role{font-size:.8rem;color:#93c5fd}
+.controls{display:flex;gap:10px;align-items:center}#status{font-size:.9rem;color:#aebbd2}
+</style></head><body><main>
+<header><h1>CHK AI CORE</h1><span id="status">Non connecté</span></header>
+<div class="panel" id="loginpanel"><p>Entrez le mot de passe administrateur. Votre session reste uniquement dans la mémoire de cet onglet.</p>
+<form id="loginform"><input id="password" type="password" aria-label="Mot de passe" required autocomplete="current-password"><button type="submit">Se connecter</button></form></div>
+<div class="panel" id="chatpanel" hidden><div id="messages" aria-live="polite"></div>
+<form id="chatform"><label for="message">Demande au chatbot open source</label><textarea id="message" required placeholder="Liste mes applications, prépare une tâche..."></textarea><div class="controls"><button type="submit">Envoyer</button><button type="button" id="apps">Applications</button><button type="button" id="tasks">Tâches</button></div></form></div>
+<div id="notice" role="status"></div>
+</main><script src="/chat.js"></script></body></html>
