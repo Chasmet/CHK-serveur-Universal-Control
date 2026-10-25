@@ -6,6 +6,7 @@ import { createSecurity } from "./security.mjs";
 import { createAI } from "./ai.mjs";
 import { createMCP } from "./mcp.mjs";
 import { createGodotBridge } from "./godot.mjs";
+import { createCryptoModule } from "./crypto.mjs";
 
 const baseConfig = () => ({
   port: Number(process.env.PORT || 8787), host: process.env.HOST || "127.0.0.1",
@@ -39,6 +40,7 @@ export async function buildServer(opts = {}) {
   const security = createSecurity(config, store);
   const ai = createAI(config, store);
   const godot = createGodotBridge();
+  const crypto = createCryptoModule(store);
   const loginFailures = new Map();
   async function legacyCall(tool, args) {
     if (!config.legacyUrl) throw Error("legacy_not_configured");
@@ -80,7 +82,7 @@ export async function buildServer(opts = {}) {
       return await store.markLegacy(id, { error: e.message, execution_state: "unknown", retry_command: false }, "unknown");
     }
   }
-  const mcp = createMCP(config, store, security, ai, legacyCall, approveTask, godot);
+  const mcp = createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto);
   const json = security.json;
   const server = httpServer(async (req, res) => {
     res.setHeader("x-content-type-options", "nosniff");
