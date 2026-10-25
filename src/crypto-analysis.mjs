@@ -203,5 +203,85 @@ export function createCryptoIntelligence({fetchImpl=fetch,now=Date.now}={}) {
         externalContentUntrusted:true,readOnly:true};
     }finally{clearTimeout(timer);}
   }
-  return {chart,multi,news,openPublicPage};
+  const publicCache=new Map();
+  async function publicMarket(path,ttlMs=15_000) {
+    const record=publicCache.get(path);
+    if(record&&now()-record.time<ttlMs)return record.result;
+    const result=await jsonGet(fetchImpl,BASE+path);
+    if(publicCache.size>100)publicCache.delete(publicCache.keys().next().value);
+    publicCache.set(path,{time:now(),result});
+    return result;
+  }
+  async function ticker(input={}) {
+    const symbol=normalizeSymbol(input.symbol);
+    const result=await publicMarket("/v5/market/tickers?category=spot&symbol="+symbol,15_000);
+    const x=result?.list?.find(x=>x.symbol===symbol);
+    if(!x)throw Error("crypto_market_ticker_missing");
+    return {ok:true,readOnly:true,source:BASE,category:"spot",symbol,
+      lastPrice:round(Number(x.lastPrice),10),bid:round(Number(x.bid1Price),10),
+      ask:round(Number(x.ask1Price),10),change24hPct:round(Number(x.price24hPcnt)*100,2),
+      volume24h:round(Number(x.volume24h),2),
+      turnover24h:round(Number(x.turnover24h),2),
+      high24h:round(Number(x.highPrice24h),10),low24h:round(Number(x.lowPrice24h),10),
+      noAutomaticTrade:true};
+  }
+  async function orderbook(input={}) {
+    const symbol=normalizeSymbol(input.symbol);
+    const depth=Number(input.depth??50);
+    if(![1,50,200].includes(depth))throw Error("crypto_invalid_depth");
+    const result=await publicMarket("/v5/market/orderbook?category=spot&symbol="+symbol+"&limit="+depth,12_000);
+    const parse=levels=>Array.isArray(levels)?levels.map(a=>({
+      price:Number(a[0]),size:Number(a[1])})).filter(x=>Number.isFinite(x.price)&&x.price>0&&
+      Number.isFinite(x.size)&&x.size>=0):[];
+    const bids=parse(result?.b),asks=parse(result?.a);
+    if(!bids.length||!asks.length)throw Error("crypto_orderbook_missing");
+    const bid=bids[0],ask=asks[0];
+    const bidQuote=bids.reduce((s,v)=>s+v.price*v.size,0);
+    const askQuote=asks.reduce((s,v)=>s+v.price*v.size,0);
+    const quoteTotal=bidQuote+askQuote;
+    return {ok:true,source:BASE,readOnly:true,market:"spot",symbol,levels:depth,
+      bestBid:bid.price,bestAsk:ask.price,spread:round(ask.price-bid.price,9),
+      spreadPct:round(100*(ask.price-bid.price)/((bid.price+ask.price)/2),4),
+      bidLiquidityQuote:round(bidQuote,2),askLiquidityQuote:round(askQuote,2),
+      bidLiquidityRatioPct:quoteTotal?round(100*bidQuote/quoteTotal,2):null,
+      largestBidWalls:bids.sort((a,b)=>b.price*b.size-a.price*a.size).slice(0,5),
+      largestAskWalls:asks.sort((a,b)=>b.price*b.size-a.price*a.size).slice(0,5),
+      orderBookTimestamp:Number(result?.ts)||null,
+      warning:"Carnet public instantané; les murs peuvent disparaître et n'assurent aucune prédiction. Aucun ordre."};
+  }
+  async function recentTrades(input={}) {
+    const symbol=normalizeSymbol(input.symbol);
+    const limit=Number(input.limit??50);
+    if(!Number.isInteger(limit)||limit<1||limit>200)throw Error("crypto_invalid_limit");
+    const result=await publicMarket("/v5/market/recent-trade?category=spot&symbol="+symbol+"&limit="+limit,15_000);
+    if(!Array.isArray(result?.list))throw Error("crypto_recent_trades_missing");
+    let buy=0,sell=0,buyVolume=0,sellVolume=0;
+    const sample=[];
+    for(const row of result.list){
+      const side=String(row.S||"").toUpperCase(),volume=Number(row.v),price=Number(row.p);
+      if(!Number.isFinite(price)||price<=0||!Number.isFinite(volume)||volume<0)continue;
+      if(side==="BUY"){buy++;buyVolume+=volume;} else if(side==="SELL"){sell++;sellVolume+=volume;}
+      if(sample.length<20)sample.push({price,volume,side,time:Number(row.T)||null});
+    }
+    return {ok:true,source:BASE,market:"spot",symbol,readOnly:true,
+      totalSamples:buy+sell,buyTradeCount:buy,sellTradeCount:sell,
+      buyBaseVolume:round(buyVolume,7),sellBaseVolume:round(sellVolume,7),
+      buyVolumeSharePct:(buyVolume+sellVolume)?round(buyVolume/(buyVolume+sellVolume)*100,2):null,
+      trades:sample,warning:"Échantillon des dernières transactions publiques; non exhaustif, sans preuve de tendance durable."};
+  }
+  async function instrumentRules(input={}) {
+    const symbol=normalizeSymbol(input.symbol);
+    const result=await publicMarket("/v5/market/instruments-info?category=spot&symbol="+symbol,120_000);
+    const entry=result?.list?.find(x=>String(x.symbol).toUpperCase()===symbol);
+    if(!entry)throw Error("crypto_instrument_missing");
+    return {ok:true,source:BASE,readOnly:true,symbol,status:String(entry.status||""),
+      baseCoin:String(entry.baseCoin||""),quoteCoin:String(entry.quoteCoin||""),
+      minOrderAmt:String(entry.lotSizeFilter?.minOrderAmt||""),
+      maxOrderAmt:String(entry.lotSizeFilter?.maxOrderAmt||""),
+      qtyStep:String(entry.lotSizeFilter?.basePrecision||entry.lotSizeFilter?.qtyStep||""),
+      tickSize:String(entry.priceFilter?.tickSize||""),
+      minOrderQty:String(entry.lotSizeFilter?.minOrderQty||""),
+      realOrdersBlockedInMCP:true};
+  }
+  return {chart,multi,news,openPublicPage,ticker,orderbook,recentTrades,instrumentRules};
 }
