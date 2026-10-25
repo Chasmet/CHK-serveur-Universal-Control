@@ -1,3 +1,5 @@
+import { cryptoTools } from "./crypto.mjs";
+
 const tools = [
   { name: "godot_status", title: "Pirate Warrior 2 - état", description: "Vérifie la connexion à l’éditeur Godot réel sur le PC, sans prétendre qu’une tâche est terminée.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "godot_run", title: "Pirate Warrior 2 - commande", description: "Prépare une commande Godot, à approuver dans le panneau local avant son exécution réelle.", inputSchema: { type: "object", required: ["method"], properties: { method: { type: "string" }, params: { type: "object" }, request_id: { type: "string" } } } },
@@ -14,13 +16,13 @@ const tools = [
 ];
 const textResult = obj => ({ content: [{ type: "text", text: JSON.stringify(obj) }], structuredContent: obj, isError: Boolean(obj?.error) });
 function exposedTools() {
-  return tools.map(({ readOnlyHint, ...tool }) => ({
+  return [...tools,...cryptoTools].map(({ readOnlyHint, ...tool }) => ({
     ...tool,
     annotations: { readOnlyHint: Boolean(readOnlyHint), destructiveHint: !readOnlyHint, openWorldHint: false },
     securitySchemes: [{ type: "oauth2", scopes: [readOnlyHint ? "mcp:read" : "mcp:write"] }]
   }));
 }
-export function createMCP(config, store, security, ai, legacyCall, approveTask, godot) {
+export function createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto) {
   const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "godot_run", "godot_batch"]);
   return async function handle(rpc, req, res) {
     if (!rpc || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string" || Array.isArray(rpc)) {
@@ -47,7 +49,13 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
           output = await store.submit({ app_id: "godot-local", action: name, args, source: "mcp", request_id });
         }
         else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: store.listApps(Boolean(config.legacyUrl)).length, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl) };
-        else if (name === "apps_list") output = store.listApps(Boolean(config.legacyUrl));
+        else if (name === "apps_list") output = { apps: store.listApps(Boolean(config.legacyUrl)) };
+        else if (name === "crypto_status") output = crypto.status();
+        else if (name === "crypto_scan_bybit") output = await crypto.scan(a);
+        else if (name === "crypto_list_bybit") output = await crypto.page(a);
+        else if (name === "crypto_portfolio") output = await crypto.dispatch("crypto_portfolio");
+        else if (name === "crypto_tracking") output = await crypto.dispatch("crypto_tracking");
+        else if (name === "crypto_task_result") output = crypto.result(a);
         else if (name === "app_register") output = await store.registerApp(a);
         else if (name === "app_invite") output = await store.createInvite();
         else if (name === "task_submit") output = await store.submit({ ...a, source: "mcp", legacy: Boolean(config.legacyUrl) });
