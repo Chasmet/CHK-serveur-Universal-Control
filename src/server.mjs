@@ -94,6 +94,10 @@ export async function buildServer(opts = {}) {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" });
         return res.end(await readFile(fileURLToPath(new URL("../public/chat.html", import.meta.url)), "utf8"));
       }
+      if (req.method === "GET" && url.pathname === "/oauth-login.js") {
+        res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+        return res.end(await readFile(fileURLToPath(new URL("../public/oauth-login.js", import.meta.url)), "utf8"));
+      }
       if (req.method === "GET" && url.pathname === "/chat.js") {
         res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });
         return res.end(await readFile(fileURLToPath(new URL("../public/chat.js", import.meta.url)), "utf8"));
