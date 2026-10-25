@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createMarketResearch,calculateIndicators,normalizedPair,asReadOnly } from "../src/crypto-markets.mjs";
 import { createCryptoModule,cryptoTools } from "../src/crypto.mjs";
-const makeResponse=data=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({retCode:0,result:data})});
+const makeResponse=data=>({ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({retCode:0,result:data}),json:async()=>({retCode:0,result:data})});
 const candles=Array.from({length:150},(_,i)=>{
  const close=100+i*.1+Math.sin(i/8);
  return [String(1700000000000+i*60000),String(close-.15),String(close+1),String(close-1),String(close),String(1000+i),String(100000+i*100)];
