@@ -28,6 +28,7 @@ function fake() {
 }
 test("crypto tools never expose orders and every declared tool is read-only",()=>{
   assert.deepEqual(cryptoToolDefinitions.map(x=>x.name),[
+    "crypto_ticker","crypto_orderbook","crypto_recent_trades","crypto_instrument_rules",
     "crypto_chart_analysis","crypto_multi_timeframes","crypto_news_search",
     "crypto_public_page","crypto_app_diagnostics","crypto_market_watch_status",
     "crypto_bot_rules_summary","crypto_status","crypto_scan_bybit",
