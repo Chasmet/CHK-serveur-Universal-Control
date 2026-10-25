@@ -20,8 +20,9 @@ async function setup(t) {
     await new Promise(resolve => server.close(resolve));
     await rm(dir, { recursive: true, force: true });
   });
-  const request = async (path, { method = "GET", bearer = "", body, form = false, redirect = "follow" } = {}) => {
+  const request = async (path, { method = "GET", bearer = "", body, form = false, redirect = "follow", accept = "" } = {}) => {
     const headers = {};
+    if (accept) headers.accept = accept;
     if (bearer) headers.authorization = "Bearer " + bearer;
     if (body) headers["content-type"] = form ? "application/x-www-form-urlencoded" : "application/json";
     return fetch(url + path, { method, headers, body: body ? (form ? new URLSearchParams(body) : JSON.stringify(body)) : undefined, redirect });
@@ -99,6 +100,48 @@ test("OAuth2.1 PKCE + issuer + audience for ChatGPT", async t => {
   assert.equal((await request("/mcp", { method: "POST", bearer: access.access_token, body: { jsonrpc: "2.0", id: 5, method: "tools/list" } })).status, 200);
   assert.equal((await request("/oauth/token", { method: "POST", form: true, body: { grant_type: "refresh_token", client_id: client.client_id, resource: options.base + "/mcp", refresh_token: access.refresh_token } })).status, 200);
   assert.equal((await request("/oauth/register", { method: "POST", body: { redirect_uris: ["https://evil.test/steal"] } })).status, 400);
+});
+
+test("OAuth login on Android is interactive and returns JSON redirect or a clear error", async t => {
+  const { request, options } = await setup(t);
+  const redirect_uri = "https://chatgpt.com/connector_platform_oauth_redirect";
+  const registered = await request("/oauth/register", { method: "POST",
+    body: { client_name: "ChatGPT Android", redirect_uris: [redirect_uri], token_endpoint_auth_method: "none" } });
+  assert.equal(registered.status, 201);
+  const client = await registered.json();
+  const verifier = randomBytes(40).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const query = new URLSearchParams({ response_type: "code", client_id: client.client_id,
+    redirect_uri, code_challenge: challenge, code_challenge_method: "S256",
+    resource: options.base + "/mcp", state: "mobile-check" });
+  const path = "/oauth/authorize?" + query;
+  const page = await request(path);
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  assert.match(html, /id="chk-oauth-form"/);
+  assert.match(html, /id="feedback"/);
+  assert.match(html, /oauth-login.js/);
+  assert.match(page.headers.get("content-security-policy"), /script-src 'self'/);
+  const script = await request("/oauth-login.js");
+  assert.equal(script.status, 200);
+  assert.match(await script.text(), /Vérification du mot de passe/);
+  const post = password => request(path, { method: "POST", form: true,
+    body: { password }, redirect: "manual", accept: "application/json" });
+  const bad = await post("incorrect-password");
+  assert.equal(bad.status, 403);
+  assert.deepEqual(await bad.json(), { error: "invalid_password" });
+  const accepted = await post(options.adminPassword);
+  assert.equal(accepted.status, 200);
+  const answer = await accepted.json();
+  const callback = new URL(answer.redirect_to);
+  assert.equal(callback.origin, "https://chatgpt.com");
+  assert.equal(callback.searchParams.get("state"), "mobile-check");
+  const exchanged = await request("/oauth/token", { method: "POST", form: true,
+    body: { grant_type: "authorization_code", client_id: client.client_id,
+      code: callback.searchParams.get("code"), redirect_uri,
+      resource: options.base + "/mcp", code_verifier: verifier } });
+  assert.equal(exchanged.status, 200);
+  assert.ok((await exchanged.json()).access_token);
 });
 test("crash leaves leased tasks UNKNOWN without re-execution", async t => {
   const { request, access_token, file } = await setup(t);
