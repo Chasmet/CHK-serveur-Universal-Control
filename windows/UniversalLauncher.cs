@@ -1,7 +1,7 @@
 // CHK Universal Control MCP - native Windows (.NET Framework 4.8) localhost dashboard.
 // Build with official Windows csc.exe. No Python, PyInstaller, Render, or Supabase.
 // GUI remains alive; minimized to system tray on close. HTTP panel stays on loopback.
-// GitHub Actions embeds the approved Godot Node MCP JavaScript bundle as a resource.
+// Bundled Node server and separate Tailscale tsnet bridge. No changes to PC-SALON's ports.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -60,6 +60,8 @@ namespace CHKUniversalNative
         TcpListener listener;
         Thread listenThread;
         Process node;
+        Process funnel;
+        bool monitorStarted = false;
         string status = "Site local actif. Clique sur INSTALLER ET CONNECTER.";
         string hostname = "";
         bool busy = false;
@@ -281,61 +283,74 @@ namespace CHKUniversalNative
             using(var w = new StreamWriter(fs, new UTF8Encoding(false))) w.Write(serializer.Serialize(config));
             return config;
         }
-        static string GetTool(string filename)
+static Dictionary<string, object> ReadFunnelStatus()
         {
-            string path = Environment.GetEnvironmentVariable("ProgramFiles");
-            var attempts = new [] {
-                Path.Combine(path ?? @"C:\Program Files", "Tailscale", filename),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Tailscale", filename),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Tailscale", filename)
-            };
-            foreach(var candidate in attempts) if (File.Exists(candidate)) return candidate;
-            throw new Exception("Tailscale n'est pas trouvé. Ouvre Tailscale sur ton PC.");
-        }
-        static string Run(string program, string arguments, int timeoutSeconds)
-        {
-            var psi = new ProcessStartInfo(program, arguments) {
-                UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
-            using(var p = Process.Start(psi))
-            {
-                // Both stdout and stderr are consumed asynchronously to avoid a full-pipe deadlock.
-                var output = new StringBuilder();
-                var error = new StringBuilder();
-                p.OutputDataReceived += delegate(object a, DataReceivedEventArgs e) {
-                    if (e.Data != null) lock(output) output.AppendLine(e.Data);
-                };
-                p.ErrorDataReceived += delegate(object a, DataReceivedEventArgs e) {
-                    if (e.Data != null) lock(error) error.AppendLine(e.Data);
-                };
-                p.BeginOutputReadLine(); p.BeginErrorReadLine();
-                if (!p.WaitForExit(timeoutSeconds * 1000)) {
-                    try { p.Kill(); } catch {}
-                    throw new Exception("Tailscale ne répond pas (" + timeoutSeconds + " secondes).");
-                }
-                p.WaitForExit();
-                var detail = output.ToString() + "\n" + error.ToString();
-                if (p.ExitCode != 0) throw new Exception("Commande Tailscale refusée : " + detail.Trim().Substring(0, Math.Min(detail.Trim().Length, 340)));
-                return detail;
+            try {
+                var path=Path.Combine(InstallDir,"funnel-status.json");
+                if (!File.Exists(path)) return new Dictionary<string,object>{{"state","not_installed"}};
+                var json=File.ReadAllText(path,Encoding.UTF8);
+                var value=new JavaScriptSerializer().DeserializeObject(json) as Dictionary<string,object>;
+                return value??new Dictionary<string,object>{{"state","unknown"}};
+            } catch {
+                return new Dictionary<string,object>{{"state","unavailable"}};
             }
         }
-        string TailscaleName(string tailscale)
+        static string Field(Dictionary<string,object> map,string key)
         {
-            string data = Run(tailscale, "status --json", 20);
-            var match = Regex.Match(data, "\"DNSName\"\\s*:\\s*\"([a-zA-Z0-9.-]+\\.ts\\.net)\\.?\"");
-            if (!match.Success) throw new Exception("Tailscale est déconnecté ou MagicDNS est indisponible.");
-            return match.Groups[1].Value.ToLowerInvariant();
+            return map.ContainsKey(key)?Convert.ToString(map[key]):"";
         }
-        string FunnelState(string tailscale)
+        void MonitorFunnel()
         {
-            // Refuse a 443 conflict. Never reset Funnel: keep 8443 and 10000 untouched.
-            string data = Run(tailscale, "serve status --json", 15);
-            if (!Regex.IsMatch(data, @"(?<![0-9])443(?![0-9])")) return "empty";
-            return data.Contains("127.0.0.1:8787") || data.Contains("localhost:8787") ? "ours" : "occupied";
+            lock(gate) { if(monitorStarted)return;monitorStarted=true; }
+            ThreadPool.QueueUserWorkItem(delegate{
+                string lastURL="";
+                while(!exiting)
+                {
+                    try {
+                        var st=ReadFunnelStatus();
+                        var state=Field(st,"state");
+                        var url=Field(st,"url");
+                        if(state=="online" && url.StartsWith("https://",StringComparison.OrdinalIgnoreCase))
+                        {
+                            var cfg=Config();
+                            var prior=cfg.ContainsKey("public_url")?Convert.ToString(cfg["public_url"]):"";
+                            if(prior!=url)
+                            {
+                                cfg["public_url"]=url;
+                                File.WriteAllText(ConfigPath,serializer.Serialize(cfg),Encoding.UTF8);
+                                // First enrollment only: restart the owned Node process
+                                // with the correct OAuth issuer and audience.
+                                if(node!=null && !node.HasExited) {
+                                    node.Kill();node.WaitForExit(5000);
+                                    node=null;
+                                }
+                                if(!LocalNodeOk()) {
+                                    string root=Path.Combine(InstallDir,"runtime-v0.2.0");
+                                    string exe=Path.Combine(root,"node.exe");
+                                    string serverFile=Path.Combine(root,"src","server.mjs");
+                                    if(File.Exists(exe)&&File.Exists(serverFile)) LaunchNode(cfg,exe,serverFile);
+                                }
+                            }
+                            lock(gate) {hostname=url;publicOk=LocalNodeOk();}
+                            if(lastURL!=url) {
+                                Message("Serveur universel local actif ; identité HTTPS 443 distincte : "+url);
+                                lastURL=url;
+                            }
+                        }
+                        else if(state=="auth_required") {
+                            lock(gate){publicOk=false;}
+                            Message("Serveur LOCAL actif. Autorise une fois la nouvelle identité Tailscale dans le site local.");
+                        }
+                        else if(state=="error") {
+                            lock(gate){publicOk=false;}
+                            Message("Serveur LOCAL actif. HTTPS indépendant en erreur ; voir le diagnostic.");
+                        }
+                    }catch(Exception e){Log(e);}
+                    Thread.Sleep(2200);
+                }
+            });
         }
-        static bool LocalNodeOk()
+                static bool LocalNodeOk()
         {
             try {
                 var req = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:8787/health");
@@ -345,16 +360,44 @@ namespace CHKUniversalNative
                     return rd.ReadToEnd().Contains("CHK Universal Control");
             } catch { return false; }
         }
-        void RecoverNode()
+void RecoverNode()
         {
             try {
-                var nodeExe = Path.Combine(InstallDir, "runtime-v0.2.0", "node.exe");
-                var script = Path.Combine(InstallDir, "runtime-v0.2.0", "src", "server.mjs");
-                if(File.Exists(nodeExe) && File.Exists(script) && File.Exists(ConfigPath))
-                    LaunchNode(Config(), nodeExe, script);
-            } catch(Exception e) { Log(e); }
+                var dir=Path.Combine(InstallDir,"runtime-v0.2.0");
+                var exe=Path.Combine(dir,"node.exe");
+                var serverFile=Path.Combine(dir,"src","server.mjs");
+                if(File.Exists(exe)&&File.Exists(serverFile)&&File.Exists(ConfigPath))
+                    LaunchNode(Config(),exe,serverFile);
+                StartFunnel();
+                MonitorFunnel();
+            }catch(Exception e){Log(e);Message("Erreur locale au démarrage : "+e.Message);}
         }
-        void InstallNode(Dictionary<string, object> cfg)
+        void StartFunnel()
+        {
+            var root=Path.Combine(InstallDir,"runtime-v0.2.0");
+            Directory.CreateDirectory(root);
+            var exe=Path.Combine(root,"CHK-Universal-Funnel.exe");
+            if(!File.Exists(exe)) {
+                using(var embedded=Assembly.GetExecutingAssembly().GetManifestResourceStream("chk.funnel")) {
+                    if(embedded==null) throw new Exception("Composant HTTPS Tailscale tsnet absent.");
+                    using(var target=new FileStream(exe,FileMode.CreateNew,FileAccess.Write))
+                        embedded.CopyTo(target);
+                }
+            }
+            var existing=Process.GetProcessesByName("CHK-Universal-Funnel");
+            if(existing.Length>0)return; // Reuse independent identity already running.
+            // Clear stale online state before this process has authenticated.
+            var state=Path.Combine(InstallDir,"funnel-status.json");
+            if(File.Exists(state)) try{File.Delete(state);}catch{}
+            var psi=new ProcessStartInfo(exe){
+                UseShellExecute=false,CreateNoWindow=true,
+                WorkingDirectory=root,WindowStyle=ProcessWindowStyle.Hidden
+            };
+            psi.EnvironmentVariables["CHK_UNIVERSAL_HOME"]=InstallDir;
+            funnel=Process.Start(psi);
+            if(funnel==null) throw new Exception("Démarrage du composant Tailscale impossible.");
+        }
+                void InstallNode(Dictionary<string, object> cfg)
         {
             var root = Path.Combine(InstallDir, "runtime-v0.2.0");
             Directory.CreateDirectory(root);
@@ -411,78 +454,50 @@ namespace CHKUniversalNative
             Message("Démarrage du serveur MCP universel...");
             LaunchNode(cfg,nodeExe,script);
         }
-        void LaunchNode(Dictionary<string,object> cfg,string nodeExe,string script)
+void LaunchNode(Dictionary<string,object> cfg,string nodeExe,string script)
         {
             if(LocalNodeOk()){localOk=true;return;}
-            string domain=Convert.ToString(cfg.ContainsKey("hostname")?cfg["hostname"]:"");
-            var psi=new ProcessStartInfo(nodeExe,"\""+script+"\"") {
+            var publicBase=cfg.ContainsKey("public_url")?Convert.ToString(cfg["public_url"]):"";
+            if(!publicBase.StartsWith("https://",StringComparison.OrdinalIgnoreCase))
+                publicBase="http://localhost:8787";
+            var psi=new ProcessStartInfo(nodeExe,"\""+script+"\""){
                 UseShellExecute=false,CreateNoWindow=true,WindowStyle=ProcessWindowStyle.Hidden,
                 WorkingDirectory=Path.GetDirectoryName(Path.GetDirectoryName(script))
             };
             psi.EnvironmentVariables["HOST"]="127.0.0.1";
             psi.EnvironmentVariables["PORT"]="8787";
-            psi.EnvironmentVariables["PUBLIC_BASE_URL"]=String.IsNullOrEmpty(domain)?"http://localhost:8787":"https://"+domain;
+            psi.EnvironmentVariables["PUBLIC_BASE_URL"]=publicBase;
             psi.EnvironmentVariables["ADMIN_PASSWORD"]=Convert.ToString(cfg["admin_password"]);
             psi.EnvironmentVariables["JWT_SECRET"]=Convert.ToString(cfg["jwt_secret"]);
             psi.EnvironmentVariables["DATA_FILE"]=Path.Combine(InstallDir,"data","server.json");
             psi.EnvironmentVariables["OLLAMA_URL"]="";
             node=Process.Start(psi);
+            if(node==null)throw new Exception("Démarrage du moteur Node impossible.");
             for(int i=0;i<50;i++){
                 if(LocalNodeOk()){localOk=true;return;}
                 if(node.HasExited)throw new Exception("Node s'est arrêté (code "+node.ExitCode+").");
                 Thread.Sleep(350);
             }
-            throw new Exception("Serveur MCP local 8787 ne répond pas.");
-        }
-        void VerifyPublic(string name,Dictionary<string,object> cfg)
-        {
-            // This checks HTTPS from the PC, not from ChatGPT itself.
-            ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;
-            var root="https://"+name;
-            string[] paths={"/health","/.well-known/oauth-protected-resource"};
-            string[] expected={"CHK Universal Control","authorization_servers"};
-            for(int i=0;i<paths.Length;i++){
-                try {
-                    var request=(HttpWebRequest)WebRequest.Create(root+paths[i]);
-                    request.Timeout=14000;request.ReadWriteTimeout=14000;
-                    using(var response=(HttpWebResponse)request.GetResponse())
-                    using(var reader=new StreamReader(response.GetResponseStream()))
-                        if(response.StatusCode!=HttpStatusCode.OK||!reader.ReadToEnd().Contains(expected[i]))
-                            throw new Exception("Réponse HTTPS incorrecte sur "+paths[i]);
-                }catch(WebException e){
-                    throw new Exception("HTTPS Funnel 443 inaccessible : "+e.Status+
-                        ". Anciennes routes conservées. Voir diagnostic.",e);
-                }
-            }
+            throw new Exception("Serveur MCP local sur 8787 ne répond pas.");
         }
         void StartInstall()
         {
-            lock(gate){if(busy)return;busy=true;publicOk=false;status="Installation sur ton PC...";}
+            lock(gate){if(busy)return;busy=true;status="Installation locale sur ton PC...";}
             ThreadPool.QueueUserWorkItem(delegate{
                 try{
-                    Message("Lecture Tailscale existant...");
-                    var tailscale=GetTool("tailscale.exe");
-                    var name=TailscaleName(tailscale);
-                    var state=FunnelState(tailscale);
-                    if(state=="occupied")throw new Exception("Port Funnel 443 occupé par un autre service : aucune modification.");
+                    // Installing never attempts to change Windows Tailscale Serve/Funnel configuration.
                     var cfg=Config();
-                    cfg["hostname"]=name;
-                    File.WriteAllText(ConfigPath,serializer.Serialize(cfg),Encoding.UTF8);
                     InstallNode(cfg);
-                    if(state=="empty"){
-                        Message("Activation Funnel HTTPS 443 (sans modifier 8443/10000)...");
-                        Run(tailscale,"funnel --bg --yes --https=443 http://127.0.0.1:8787",50);
-                    }
-                    Message("Contrôle public HTTPS 443...");
-                    VerifyPublic(name,cfg);
-                    hostname=name;
-                    lock(gate){busy=false;publicOk=true;}
-                    Message("Serveur universel HTTPS 443 opérationnel pour les tests ChatGPT.");
+                    Message("Moteur local OK. Démarrage du HTTPS 443 indépendant...");
+                    StartFunnel();
                     SaveAutostart();
+                    MonitorFunnel();
+                    lock(gate){busy=false;}
+                    Message("Serveur local opérationnel. Vérifie l'autorisation du nouvel appareil Tailscale sur le site.");
                 }catch(Exception e){Fail(e.Message,e);}
             });
         }
-        void SaveAutostart()
+                void SaveAutostart()
         {
             try{
                 var dir=Path.Combine(InstallDir,"runtime-v0.2.0");
@@ -493,13 +508,13 @@ namespace CHKUniversalNative
                     key.SetValue("CHKUniversalControl","\""+path+"\" --autorun",RegistryValueKind.String);
             }catch(Exception e){Log(e);}
         }
-        void CopyChat()
+void CopyChat()
         {
-            lock(gate){if(!publicOk){Message("HTTPS 443 non vérifié. Voir les erreurs.");return;}}
-            try{Clipboard.SetText("https://"+hostname+"/mcp");Message("Lien universel MCP copié.");}
+            lock(gate){if(!publicOk){Message("Nouvelle identité HTTPS 443 en attente. Autorise Tailscale puis vérifie.");return;}}
+            try{Clipboard.SetText(hostname+"/mcp");Message("Lien du serveur MCP universel copié.");}
             catch(Exception e){Fail("Erreur de copie : "+e.Message,e);}
         }
-        void StartLocalPanel()
+                void StartLocalPanel()
         {
             listener = new TcpListener(IPAddress.Loopback, PanelPort);
             listener.Start(8);
@@ -544,7 +559,7 @@ namespace CHKUniversalNative
                         if(at>0)h[head.Substring(0,at).Trim()]=head.Substring(at+1).Trim();
                     }
                     string browserHost=HeaderValue(h,"Host");
-                    if(browserHost!="127.0.0.1:8792" && browserHost!="localhost:8792") {
+                    if(browserHost!="127.0.0.1:8794" && browserHost!="localhost:8794") {
                         Reply(stream,403,"application/json","{\"error\":\"Host local requis\"}");return;
                     }
                     if(verb=="GET" && route=="/") {
@@ -556,15 +571,20 @@ namespace CHKUniversalNative
                     if(verb=="GET" && route=="/api/status") {
                         bool running,publicReady;string msg;
                         lock(gate){running=busy;publicReady=publicOk;msg=status;}
+                        var tunnel=ReadFunnelStatus();
                         Reply(stream,200,"application/json",serializer.Serialize(new {
                             message=msg,busy=running,public_ok=publicReady,
                             local_ok=LocalNodeOk(),configured=File.Exists(ConfigPath),
+                            tunnel_state=Field(tunnel,"state"),
+                            tunnel_url=Field(tunnel,"url"),
+                            auth_url=Field(tunnel,"auth_url"),
+                            tunnel_message=Field(tunnel,"message"),
                             version=Version
                         }));return;
                     }
                     if(verb!="POST") { Reply(stream,404,"application/json","{\"error\":\"Not Found\"}");return; }
                     string origin=HeaderValue(h,"Origin");
-                    if(origin!="" && origin!="http://127.0.0.1:8792" && origin!="http://localhost:8792") {
+                    if(origin!="" && origin!="http://127.0.0.1:8794" && origin!="http://localhost:8794") {
                         Reply(stream,403,"application/json","{\"error\":\"Origine refusée\"}");return;
                     }
                     if(HeaderValue(h,"X-CHK-UI")!=uiSecret) {
@@ -576,6 +596,8 @@ namespace CHKUniversalNative
                     }
                     if(route=="/api/diagnostic") {
                         var report=File.Exists(LogPath)?File.ReadAllText(LogPath):"Aucun diagnostic.";
+                        var tunnel=ReadFunnelStatus();
+                        report += "\nTailscale deuxième identité: " + Field(tunnel,"state") + " / " + Field(tunnel,"message");
                         if(report.Length>10000)report=report.Substring(report.Length-10000);
                         report=Regex.Replace(report,@"\b[a-f0-9]{64}\b","[CLE MASQUEE]",RegexOptions.IgnoreCase);
                         Reply(stream,200,"application/json",serializer.Serialize(new{report=report}));return;
@@ -584,10 +606,10 @@ namespace CHKUniversalNative
                         bool publicReady;string name;
                         lock(gate){publicReady=publicOk;name=hostname;}
                         if(route!="/api/copy-password" && !publicReady) {
-                            Reply(stream,409,"application/json","{\"error\":\"Acces public non verifie\"}");return;
+                            Reply(stream,409,"application/json","{\"error\":\"Nouvelle identité HTTPS 443 non prête\"}");return;
                         }
                         var cfg=Config();
-                        string url=route=="/api/copy-chat"?"https://"+name+"/mcp":
+                        string url=route=="/api/copy-chat"?name+"/mcp":
                                   route=="/api/copy-password"?Convert.ToString(cfg["admin_password"]):
                                   "https://"+name;
                         Reply(stream,200,"application/json",serializer.Serialize(new{value=url}));return;
@@ -619,7 +641,7 @@ namespace CHKUniversalNative
         }
         internal static void SelfTest()
         {
-            if(PanelPort!=8792 || Version!="0.2.0") throw new Exception("Version invalide");
+            if(PanelPort!=8794 || Version!="0.2.0") throw new Exception("Version invalide");
             if(String.IsNullOrEmpty(Secret(32)))throw new Exception("RNG fail");
             using(var r=Assembly.GetExecutingAssembly().GetManifestResourceStream("chk.web"))
                 if(r==null || r.Length<1000)throw new Exception("Ressource web absente");
