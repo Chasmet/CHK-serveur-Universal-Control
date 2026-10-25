@@ -81,20 +81,34 @@ export function createCryptoModule(store,{base=ENDPOINT,fetchImpl=globalThis.fet
       scanned_at:new Date(c.time).toISOString(),items:list.slice(offset,offset+limit),
       next_offset:offset+limit<list.length?offset+limit:null};
   }
-  async function dispatch(action) {
+  async function dispatch(action,args={}) {
     const app=agent();
     if(!app)return {error:"crypto_android_not_registered",hint:"Ouvrir CHK Crypto > Connexion serveur universel puis saisir une invitation MCP."};
-    if(!app.capabilities.some(c=>c.name===action&&c.readOnly===true))return {error:"crypto_read_capability_missing"};
-    const task=await store.submit({app_id:app.id,action,args:{},source:"crypto-mcp"});
+    if(!app.capabilities.some(c=>c.name===action&&c.readOnly===(action!=="crypto_chart_control")))return {error:"crypto_capability_missing",requested:action};
+    const task=await store.submit({app_id:app.id,action,args,source:"crypto-mcp"});
     return {task_id:task.id,state:task.state,android_online:Boolean(app.last_seen&&now()-app.last_seen<90000),
       hint:"La réponse n'est disponible qu'après l'exécution sur Android. Utiliser crypto_task_result."};
+  }
+  async function chartControl(args={}) {
+    const action=String(args.action||"");
+    const allowed=new Set(["set_symbol","set_timeframe","set_profile","set_indicators","zoom_in","zoom_out","pan_left","pan_right","go_to_latest","set_auto_scale"]);
+    if(!allowed.has(action))throw Error("invalid_chart_action");
+    const input=args.args||{};
+    if(typeof input!=="object"||Array.isArray(input)||JSON.stringify(input).length>4096)throw Error("invalid_chart_args");
+    // Defend Android from arbitrary paths/URLs; no command or trading execution.
+    if(action==="set_symbol" && !/^[A-Z0-9]{4,32}$/.test(String(input.symbol||"").toUpperCase()))throw Error("invalid_symbol");
+    if(action==="set_timeframe" && !["1m","3m","5m","15m","30m","1h","2h","4h","6h","12h","1d","1w"].includes(input.timeframe))throw Error("invalid_timeframe");
+    if(action==="set_profile" && !["SCALP","INTRADAY","SWING"].includes(input.profile))throw Error("invalid_profile");
+    if(["pan_left","pan_right"].includes(action)&&(!Number.isInteger(input.candles??20)||(input.candles??20)<1||(input.candles??20)>200))throw Error("invalid_pan");
+    if(action==="set_indicators" && (typeof input.indicators!=="object"||!input.indicators||Array.isArray(input.indicators)))throw Error("invalid_indicator_config");
+    return dispatch("crypto_chart_control",{action,args:input});
   }
   function result(args){
     const app=agent();
     const job=store.getJob(args?.task_id);
-    if(!app||!job||job.app_id!==app.id||!["crypto_portfolio","crypto_tracking"].includes(job.action))return {error:"crypto_task_not_found"};
+    if(!app||!job||job.app_id!==app.id||!["crypto_portfolio","crypto_tracking","crypto_chart_state","crypto_device_status","crypto_chart_control"].includes(job.action))return {error:"crypto_task_not_found"};
     return {task_id:job.id,state:job.state,result:job.state==="completed"?job.result:null,
       completed:job.state==="completed",hint:job.state==="queued"?"Ouvrir ou connecter CHK Crypto Android.":null};
   }
-  return {status,scan,page,dispatch,result};
+  return {status,scan,page,dispatch,result,chartControl};
 }
