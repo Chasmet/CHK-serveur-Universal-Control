@@ -73,8 +73,8 @@ jobs:
           New-Item -ItemType Directory -Force 'dist' | Out-Null
           $exe=(Join-Path (Get-Location).Path 'dist/CHK-Universal-Control-Windows.exe')
           $archive=(Join-Path (Get-Location).Path 'windows/runtime.zip')
-          $source=(Join-Path (Get-Location).Path $sourceFile)
-          $sourceFile = (Resolve-Path 'windows/UniversalStarter.cs').Path
+          $source=(Resolve-Path 'windows/UniversalStarter.cs').Path
+          if (!(Test-Path $source)) { throw 'Windows C# launcher file missing' }
           & $csc /nologo /target:winexe /platform:anycpu /optimize+ "/out:$exe" '/reference:System.dll' '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' '/reference:System.Web.Extensions.dll' '/reference:System.IO.Compression.dll' '/reference:System.IO.Compression.FileSystem.dll' "/resource:$archive,chk.runtime" "$source"
           if ($LASTEXITCODE -ne 0) { throw 'Windows launcher compilation failed' }
           $bytes=[System.IO.File]::ReadAllBytes($exe)
