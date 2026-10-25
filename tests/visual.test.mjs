@@ -13,7 +13,7 @@ test("visual tools need paired worker, are scoped to CHK, and keep trading appro
   const dir = await mkdtemp(join(tmpdir(), "chk-visual-"));
   t.after(() => rm(dir, {recursive:true, force:true}));
   const store = new Store(join(dir, "db.json"));
-  await store.load();
+  await store.init();
   const crypto = await store.registerApp({name:"CHK Crypto Analyse 2",
     capabilities:[{name:"portfolio_snapshot",readOnly:true},{name:"trade",readOnly:false}]});
   const other = await store.registerApp({name:"Other app",
