@@ -112,6 +112,8 @@ export async function buildServer(opts = {}) {
         const id = bits[3];
         const credential = security.bearer(req);
         if (!store.appAuthorized(id, credential)) return json(res, 401, { error: "app_auth_required" });
+        if (bits[4] === "capabilities" && req.method === "PUT")
+          return json(res, 200, await store.extendVisualCapabilities(id, body));
         if (bits[4] === "poll" && req.method === "GET") return json(res, 200, { task: await store.poll(id) });
         if (bits[4] === "result" && req.method === "POST") return json(res, 200, { task: await store.result(id, body.task_id, body.result) });
         return json(res, 404, { error: "unknown_agent_endpoint" });

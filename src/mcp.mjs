@@ -7,6 +7,11 @@ const tools = [
   { name: "task_get", title: "Etat de tâche", description: "Lire le résultat réel ou l'état d'une tâche.", inputSchema: { type: "object", required: ["task_id"], properties: { task_id: { type: "string" } } }, readOnlyHint: true },
   { name: "task_cancel", title: "Annuler commande", description: "Annule une tâche encore non exécutée.", inputSchema: { type: "object", required: ["task_id"], properties: { task_id: { type: "string" } } } },
   { name: "ai_chat", title: "Assistant Qwen open source", description: "Pose une question au modèle local via Ollama et orchestre des outils disponibles. Modèle externe optionnel.", inputSchema: { type: "object", required: ["message"], properties: { message: { type: "string" } } } },
+  { name: "crypto_status", title: "CHK Crypto sur Android", description: "Etat du CHK Crypto appairé, en ligne et outils visuels déclarés.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
+  { name: "crypto_capture", title: "Voir CHK Crypto", description: "Demande une capture JPEG de CHK Crypto, exclusivement si l'utilisateur a activé Accessibilité et vision. Retourne un task_id à suivre.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
+  { name: "crypto_inspect", title: "Lire les contrôles CHK Crypto", description: "Analyse les boutons et leurs positions sur l'écran CHK Crypto ouvert. Retourne task_id.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
+  { name: "crypto_action", title: "Contrôler CHK Crypto", description: "Appui, souris, balayage, saisie de texte ou retour Android, uniquement dans CHK Crypto après activation volontaire du service Accessibilité. Aucun ordre ni secret autorisé; retourne task_id, ne pas confondre queued et completed.", inputSchema: { type: "object", required: ["action"], properties: { action: {type:"string", enum:["ui_tap","ui_click","ui_long_press","ui_swipe","ui_type","ui_back"]}, args:{type:"object"}, request_id:{type:"string"} } } },
+  { name: "crypto_result", title: "Résultat écran CHK Crypto", description: "Récupère l'état réel d'une tâche et son image JPEG si capture terminée.", inputSchema: { type: "object", required:["task_id"], properties: {task_id:{type:"string"}} }, readOnlyHint: true },
   { name: "chk_read", title: "CHK existant: lecture", description: "Interroge uniquement server_info ou android_status de la passerelle MCP CHK existante, si configurée.", inputSchema: { type: "object", properties: { name: { type: "string", enum: ["server_info", "android_status"] } } }, readOnlyHint: true }
 ];
 const textResult = obj => ({ content: [{ type: "text", text: JSON.stringify(obj) }], structuredContent: obj, isError: Boolean(obj?.error) });
@@ -18,7 +23,7 @@ function exposedTools() {
   }));
 }
 export function createMCP(config, store, security, ai, legacyCall, approveTask) {
-  const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat"]);
+  const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "crypto_action"]);
   return async function handle(rpc, req, res) {
     if (!rpc || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string" || Array.isArray(rpc)) {
       return security.json(res, 400, { jsonrpc: "2.0", id: rpc?.id ?? null, error: { code: -32600, message: "Invalid Request" } });
@@ -36,7 +41,32 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask) 
         const name = rpc.params?.name;
         const a = rpc.params?.arguments || {};
         let output;
-        if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: store.listApps(Boolean(config.legacyUrl)).length, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl) };
+        const cryptoApp = () => store.listApps(false)
+          .filter(v => v.name === "CHK Crypto Analyse 2"
+            && v.capabilities?.some(c => c.name === "ui_status"))
+          .sort((a,b) => Number(b.online) - Number(a.online)
+            || Number(b.registered_at) - Number(a.registered_at))[0];
+        if (name === "crypto_status") {
+          const app = cryptoApp();
+          output = app ? { ok: true, app_id: app.id, online: app.online, last_seen: app.last_seen,
+            capabilities: app.capabilities.filter(c => c.name.startsWith("ui_")).map(c => c.name) }
+            : { error: "crypto_visual_capabilities_not_registered" };
+        }
+        else if (name === "crypto_capture" || name === "crypto_inspect" || name === "crypto_action") {
+          const app = cryptoApp();
+          if (!app) output = { error: "crypto_visual_capabilities_not_registered" };
+          else {
+            const action = name === "crypto_capture" ? "ui_capture"
+              : name === "crypto_inspect" ? "ui_inspect" : a.action;
+            if (!app.capabilities.some(c => c.name === action)) output = { error: "capability_not_registered" };
+            else output = await store.submit({ app_id: app.id, action, args: name === "crypto_action" ? (a.args || {}) : {},
+              request_id: a.request_id || "", source:"mcp" });
+          }
+        }
+        else if (name === "crypto_result") {
+          output = store.getJob(a.task_id) || { error: "task_not_found" };
+        }
+        else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: store.listApps(Boolean(config.legacyUrl)).length, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl) };
         else if (name === "apps_list") output = { apps: store.listApps(Boolean(config.legacyUrl)) };
         else if (name === "app_register") output = await store.registerApp(a);
         else if (name === "app_invite") output = await store.createInvite();
@@ -46,7 +76,19 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask) 
         else if (name === "ai_chat") output = await ai.chat(a.message);
         else if (name === "chk_read") output = !["server_info", "android_status"].includes(a.name || "android_status") ? { error: "forbidden_read_tool" } : config.legacyUrl ? await legacyCall(a.name || "android_status", {}) : { error: "legacy_not_configured" };
         else return security.json(res, 200, { jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "Unknown tool" } });
-        result = textResult(output);
+        if (name === "crypto_result" && output?.state === "completed"
+              && output?.action === "ui_capture" && output?.result?.jpegBase64) {
+          const { jpegBase64, ...meta } = output.result;
+          const safe = { ...output, result: meta };
+          result = {
+            content: [
+              { type: "text", text: JSON.stringify(safe) },
+              { type: "image", mimeType: "image/jpeg", data: jpegBase64 }
+            ],
+            structuredContent: safe,
+            isError: false
+          };
+        } else result = textResult(output);
       } else return security.json(res, 200, { jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "Method not found" } });
       return security.json(res, 200, { jsonrpc: "2.0", id: rpc.id, result });
     } catch (err) {
