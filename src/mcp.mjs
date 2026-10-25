@@ -1,4 +1,5 @@
 import { cryptoTools } from "./crypto.mjs";
+import { cryptoDeviceTools } from "./crypto-device-tools.mjs";
 import { asReadOnly as cryptoMarketTools } from "./crypto-markets.mjs";
 import { marketTools as advancedMarketTools } from "./crypto-market.mjs";
 import { monitorTools } from "./crypto-monitor.mjs";
@@ -19,7 +20,7 @@ const tools = [
 ];
 const textResult = obj => ({ content: [{ type: "text", text: JSON.stringify(obj) }], structuredContent: obj, isError: Boolean(obj?.error) });
 function exposedTools() {
-  return [...tools,...cryptoTools,...cryptoMarketTools,...advancedMarketTools.filter(t=>!["crypto_orderbook","crypto_multi_timeframe"].includes(t.name)),...monitorTools,
+  return [...tools,...cryptoTools,...cryptoDeviceTools,...cryptoMarketTools,...advancedMarketTools.filter(t=>!["crypto_orderbook","crypto_multi_timeframe"].includes(t.name)),...monitorTools,
     {name:"crypto_chart_state",title:"CHK Crypto — graphique Android réel",description:"Lit la paire, l'unité de temps, les indicateurs et le viewport enregistrés par le vrai graphique Android; la tâche peut être en attente.",inputSchema:{type:"object",properties:{}},readOnlyHint:true},
     {name:"crypto_device_status",title:"CHK Crypto — agent Android",description:"État du dispositif, de la connexion Internet et de l'agent MCP Android.",inputSchema:{type:"object",properties:{}},readOnlyHint:true},
     {name:"crypto_chart_control",title:"Piloter graphique CHK Crypto",description:"Modifie la paire, timeframe, profil, indicateurs, zoom ou pan de l'application Android uniquement après approbation locale. Aucune opération de trading.",inputSchema:{type:"object",required:["action"],properties:{action:{type:"string",enum:["set_symbol","set_timeframe","set_profile","set_indicators","zoom_in","zoom_out","pan_left","pan_right","go_to_latest","set_auto_scale"]},args:{type:"object"}}}}
@@ -71,6 +72,9 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
         else if (name === "crypto_portfolio") output = await crypto.dispatch("crypto_portfolio");
         else if (name === "crypto_tracking") output = await crypto.dispatch("crypto_tracking");
         else if (name === "crypto_task_result") output = crypto.result(a);
+        else if (name === "crypto_alerts") output = await crypto.dispatch("crypto_alerts");
+        else if (name === "crypto_bot_status") output = await crypto.dispatch("crypto_bot_status");
+        else if (name === "crypto_app_status") output = await crypto.dispatch("crypto_app_status");
         else if (name === "crypto_chart_state") output = await crypto.dispatch("crypto_chart_state");
         else if (name === "crypto_device_status") output = await crypto.dispatch("crypto_device_status");
         else if (name === "crypto_chart_control") output = await crypto.chartControl(a);
