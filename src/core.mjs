@@ -12,7 +12,8 @@ export const safeEqual = (a, b) => {
 };
 export const clean = (value, max = 120) => String(value ?? "").trim().slice(0, max);
 const jobStates = new Set(["pending_approval", "queued", "leased", "completed", "failed", "unknown", "cancelled"]);
-const MAX_RESULT = 12000;
+// Bounded JPEG screen previews are allowed only for explicitly opted-in CHK Crypto.
+const MAX_RESULT = 350000;
 
 export class Store {
   constructor(file) {
@@ -94,6 +95,32 @@ export class Store {
       s.apps[app.id] = app;
     });
     return { id: app.id, name, secret, capabilities: app.capabilities };
+  }
+  /** A paired Android worker may add only its fixed UI tool names, never weaken
+   * an existing readOnly policy or register arbitrary trading operations.
+   */
+  async extendVisualCapabilities(id, input) {
+    const allowed = new Set(["ui_status", "ui_inspect", "ui_capture",
+      "ui_click", "ui_tap", "ui_long_press", "ui_swipe", "ui_type", "ui_back"]);
+    const source = input?.capabilities;
+    if (!Array.isArray(source) || source.length !== allowed.size
+        || source.some(c => !c || !allowed.has(c.name)
+          || typeof c.readOnly !== "boolean"
+          || c.readOnly !== ["ui_status", "ui_inspect", "ui_capture"].includes(c.name))
+        || new Set(source.map(c => c.name)).size !== allowed.size) throw Error("invalid_visual_capabilities");
+    let updated;
+    await this.change(state => {
+      const app = state.apps[id];
+      if (!app) throw Error("unknown_app");
+      const existing = new Map(app.capabilities.map(c => [c.name, c]));
+      for (const c of source) existing.set(c.name, {
+        name: c.name, readOnly: c.readOnly, description: clean(c.description, 150)
+      });
+      if (existing.size > 80) throw Error("capability_limit");
+      app.capabilities = [...existing.values()];
+      updated = { ok: true, id: app.id, capability_count: app.capabilities.length };
+    });
+    return updated;
   }
   appAuthorized(id, token) {
     const app = this.state.apps[id];
