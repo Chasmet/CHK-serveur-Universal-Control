@@ -143,7 +143,13 @@ export class Store {
         }
       }
       if (Object.keys(s.jobs).length >= 5000) throw Error("job_limit");
-      const approval = !capability?.readOnly;
+      // The Android owner opts into this restricted CHK-only accessibility session.
+      // The APK enforces the on-device switch and rejects orders/secret fields.
+      // Other app actions and all trading capabilities still require approval.
+      const delegatedVisual = app?.name === "CHK Crypto Analyse 2"
+        && /^ui_(?:click|tap|long_press|swipe|type|back)$/.test(action)
+        && capability?.readOnly === false;
+      const approval = !capability?.readOnly && !delegatedVisual;
       const task = { id: uid(), app_id, action, args, request_id: rid, source, state: approval ? "pending_approval" : "queued", created_at: now(), updated_at: now(), attempts: 0, result: null };
       s.jobs[task.id] = task;
       result = task;
