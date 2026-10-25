@@ -13,6 +13,10 @@ on:
       - 'package.json'
       - '.github/workflows/windows-universal.yml'
 
+concurrency:
+  group: chk-universal-native-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -68,7 +72,8 @@ jobs:
           $funnel = Join-Path (Get-Location).Path 'windows\dist\CHK-Universal-Funnel.exe'
           $runtime = Join-Path (Get-Location).Path 'windows\dist\universal-runtime.zip'
           $html = Join-Path (Get-Location).Path 'windows\site.html'
-          & $csc /nologo /target:winexe /platform:anycpu /optimize+ "/out:$out" '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' '/reference:System.Web.Extensions.dll' '/reference:System.IO.Compression.dll' '/reference:System.IO.Compression.FileSystem.dll' "/resource:$funnel,chk.funnel" "/resource:$runtime,chk.package" "/resource:$html,chk.web" 'windows/UniversalLauncher.cs'
+          $sourceFile = (Resolve-Path 'windows/UniversalLauncher.cs').Path
+          & $csc /nologo /target:winexe /platform:anycpu /optimize+ "/out:$out" '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' '/reference:System.Web.Extensions.dll' '/reference:System.IO.Compression.dll' '/reference:System.IO.Compression.FileSystem.dll' "/resource:$funnel,chk.funnel" "/resource:$runtime,chk.package" "/resource:$html,chk.web" $sourceFile
           if ($LASTEXITCODE -ne 0) { throw 'Windows EXE compilation failed' }
           if (!(Test-Path $out)) { throw 'Real Windows binary missing' }
           $bytes = [System.IO.File]::ReadAllBytes($out)
