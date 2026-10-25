@@ -1,5 +1,7 @@
 import { cryptoTools } from "./crypto.mjs";
 import { asReadOnly as cryptoMarketTools } from "./crypto-markets.mjs";
+import { marketTools as advancedMarketTools } from "./crypto-market.mjs";
+import { monitorTools } from "./crypto-monitor.mjs";
 
 const tools = [
   { name: "godot_status", title: "Pirate Warrior 2 - état", description: "Vérifie la connexion à l’éditeur Godot réel sur le PC, sans prétendre qu’une tâche est terminée.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
@@ -17,14 +19,18 @@ const tools = [
 ];
 const textResult = obj => ({ content: [{ type: "text", text: JSON.stringify(obj) }], structuredContent: obj, isError: Boolean(obj?.error) });
 function exposedTools() {
-  return [...tools,...cryptoTools,...cryptoMarketTools].map(({ readOnlyHint, ...tool }) => ({
+  return [...tools,...cryptoTools,...cryptoMarketTools,...advancedMarketTools.filter(t=>!["crypto_orderbook","crypto_multi_timeframe"].includes(t.name)),...monitorTools,
+    {name:"crypto_chart_state",title:"CHK Crypto — graphique Android réel",description:"Lit la paire, l'unité de temps, les indicateurs et le viewport enregistrés par le vrai graphique Android; la tâche peut être en attente.",inputSchema:{type:"object",properties:{}},readOnlyHint:true},
+    {name:"crypto_device_status",title:"CHK Crypto — agent Android",description:"État du dispositif, de la connexion Internet et de l'agent MCP Android.",inputSchema:{type:"object",properties:{}},readOnlyHint:true},
+    {name:"crypto_chart_control",title:"Piloter graphique CHK Crypto",description:"Modifie la paire, timeframe, profil, indicateurs, zoom ou pan de l'application Android uniquement après approbation locale. Aucune opération de trading.",inputSchema:{type:"object",required:["action"],properties:{action:{type:"string",enum:["set_symbol","set_timeframe","set_profile","set_indicators","zoom_in","zoom_out","pan_left","pan_right","go_to_latest","set_auto_scale"]},args:{type:"object"}}}}
+  ].map(({ readOnlyHint, ...tool }) => ({
     ...tool,
     annotations: { readOnlyHint: Boolean(readOnlyHint), destructiveHint: !readOnlyHint, openWorldHint: false },
     securitySchemes: [{ type: "oauth2", scopes: [readOnlyHint ? "mcp:read" : "mcp:write"] }]
   }));
 }
-export function createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto, markets) {
-  const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "godot_run", "godot_batch"]);
+export function createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto, markets, advancedMarket, monitor) {
+  const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "godot_run", "godot_batch", "crypto_chart_control", "crypto_monitor_config"]);
   return async function handle(rpc, req, res) {
     if (!rpc || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string" || Array.isArray(rpc)) {
       return security.json(res, 400, { jsonrpc: "2.0", id: rpc?.id ?? null, error: { code: -32600, message: "Invalid Request" } });
@@ -65,6 +71,17 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
         else if (name === "crypto_portfolio") output = await crypto.dispatch("crypto_portfolio");
         else if (name === "crypto_tracking") output = await crypto.dispatch("crypto_tracking");
         else if (name === "crypto_task_result") output = crypto.result(a);
+        else if (name === "crypto_chart_state") output = await crypto.dispatch("crypto_chart_state");
+        else if (name === "crypto_device_status") output = await crypto.dispatch("crypto_device_status");
+        else if (name === "crypto_chart_control") output = await crypto.chartControl(a);
+        else if (name === "crypto_market_chart") output = await advancedMarket.chart(a);
+        else if (name === "crypto_recent_trades") output = await advancedMarket.trades(a);
+        else if (name === "crypto_internet_news") output = await advancedMarket.news(a);
+        else if (name === "crypto_radar") output = await monitor.radar(a);
+        else if (name === "crypto_monitor_status") output = monitor.status();
+        else if (name === "crypto_monitor_config") output = await monitor.config(a);
+        else if (name === "crypto_monitor_run") output = await monitor.run();
+        else if (name === "crypto_monitor_events") output = monitor.events(a);
         else if (name === "app_register") output = await store.registerApp(a);
         else if (name === "app_invite") output = await store.createInvite();
         else if (name === "task_submit") output = await store.submit({ ...a, source: "mcp", legacy: Boolean(config.legacyUrl) });
