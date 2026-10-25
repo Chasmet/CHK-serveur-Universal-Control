@@ -122,7 +122,7 @@ function decodeXml(s) {
     .replace(/&amp;/g,"&").replace(/&#x([0-9a-f]+);/gi,(_,n)=>String.fromCodePoint(parseInt(n,16)))
     .replace(/&#(\d+);/g,(_,n)=>String.fromCodePoint(Number(n)));
 }
-function stripTags(s) {return decodeXml(String(s).replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim()).slice(0,450);}
+function stripTags(s,max=450) {return decodeXml(String(s).replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim()).slice(0,max);}
 const pageHosts=new Set(["www.bybit.com","announcements.bybit.com","www.binance.com","academy.binance.com",
   "www.coingecko.com","www.coinmarketcap.com","www.reuters.com","www.investing.com"]);
 export function createCryptoIntelligence({fetchImpl=fetch,now=Date.now}={}) {
@@ -173,7 +173,7 @@ export function createCryptoIntelligence({fetchImpl=fetch,now=Date.now}={}) {
       for(const item of xml.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)){
         if(records.length>=count)break;
         const body=item[1];
-        const get=(tag)=>{const match=new RegExp("<"+tag+"(?:\\\\s[^>]*)?>([\\\\s\\\\S]*?)</"+tag+">","i").exec(body);
+        const get=(tag)=>{const match=new RegExp("<"+tag+"[^>]*>(.*?)</"+tag+">","is").exec(body);
           return match?match[1].replace(/^<!\[CDATA\[/,"").replace(/\]\]>$/,""):"";};
         const link=decodeXml(get("link")).trim();
         let u;try{u=new URL(link);if(u.protocol!=="https:")continue;}catch{continue;}
@@ -198,7 +198,7 @@ export function createCryptoIntelligence({fetchImpl=fetch,now=Date.now}={}) {
       if(!contentType.includes("html"))throw Error("crypto_article_not_html");
       const html=(await resp.text()).slice(0,MAX_URL_CONTENT*2);
       const title=stripTags((/<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html)||[])[1]||"");
-      const text=stripTags(html.replace(/<(script|style|nav|footer)\b[^>]*>[\s\S]*?<\/\1>/gi," ").slice(0,MAX_URL_CONTENT));
+      const text=stripTags(html.replace(/<(script|style|nav|footer)\b[^>]*>[\s\S]*?<\/\1>/gi," ").slice(0,MAX_URL_CONTENT),3000);
       return {ok:true,source:parsed.hostname,url:parsed.href,title,excerpt:text.slice(0,3000),
         externalContentUntrusted:true,readOnly:true};
     }finally{clearTimeout(timer);}
