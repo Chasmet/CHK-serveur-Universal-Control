@@ -1,4 +1,7 @@
 const tools = [
+  { name: "godot_status", title: "Pirate Warrior 2 - état", description: "Vérifie la connexion à l’éditeur Godot réel sur le PC, sans prétendre qu’une tâche est terminée.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
+  { name: "godot_run", title: "Pirate Warrior 2 - commande", description: "Prépare une commande Godot, à approuver dans le panneau local avant son exécution réelle.", inputSchema: { type: "object", required: ["method"], properties: { method: { type: "string" }, params: { type: "object" }, request_id: { type: "string" } } } },
+  { name: "godot_batch", title: "Pirate Warrior 2 - commandes groupées", description: "Prépare 1 à 12 commandes Godot, à approuver avant exécution.", inputSchema: { type: "object", required: ["commands"], properties: { commands: { type: "array", minItems: 1, maxItems: 12, items: { type: "object", required: ["method"], properties: { method: { type: "string" }, params: { type: "object" } } } }, request_id: { type: "string" } } } },
   { name: "server_status", title: "Etat CHK Universal", description: "Informations non sensibles sur le serveur et le moteur IA.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "apps_list", title: "Applications connectees", description: "Lister les applications enregistrées et les capacités exposées.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "app_register", title: "Enregistrer application", description: "Enregistre une application avec capacités déclarées. Retourne une clé privée UNE SEULE FOIS; ne la publiez jamais.", inputSchema: { type: "object", required: ["name", "capabilities"], properties: { name: { type: "string" }, capabilities: { type: "array", items: { type: "object", required: ["name", "readOnly"], properties: { name: { type: "string" }, description: { type: "string" }, readOnly: { type: "boolean" } } } } } } },
@@ -17,8 +20,8 @@ function exposedTools() {
     securitySchemes: [{ type: "oauth2", scopes: [readOnlyHint ? "mcp:read" : "mcp:write"] }]
   }));
 }
-export function createMCP(config, store, security, ai, legacyCall, approveTask) {
-  const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat"]);
+export function createMCP(config, store, security, ai, legacyCall, approveTask, godot) {
+  const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "godot_run", "godot_batch"]);
   return async function handle(rpc, req, res) {
     if (!rpc || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string" || Array.isArray(rpc)) {
       return security.json(res, 400, { jsonrpc: "2.0", id: rpc?.id ?? null, error: { code: -32600, message: "Invalid Request" } });
@@ -36,7 +39,14 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask) 
         const name = rpc.params?.name;
         const a = rpc.params?.arguments || {};
         let output;
-        if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: store.listApps(Boolean(config.legacyUrl)).length, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl) };
+        if (name === "godot_status") output = await godot.status();
+        else if (name === "godot_run" || name === "godot_batch") {
+          if (name === "godot_run" && (typeof a.method !== "string" || a.method.length < 3 || a.method.length > 120)) throw Error("godot_invalid_method");
+          if (name === "godot_batch" && (!Array.isArray(a.commands) || a.commands.length < 1 || a.commands.length > 12)) throw Error("godot_invalid_batch");
+          const { request_id, ...args } = a;
+          output = await store.submit({ app_id: "godot-local", action: name, args, source: "mcp", request_id });
+        }
+        else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: store.listApps(Boolean(config.legacyUrl)).length, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl) };
         else if (name === "apps_list") output = store.listApps(Boolean(config.legacyUrl));
         else if (name === "app_register") output = await store.registerApp(a);
         else if (name === "app_invite") output = await store.createInvite();
