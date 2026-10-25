@@ -200,6 +200,7 @@ func main() {
     if err := prepareTsnetStorage(stateDir); err != nil {
         log.Fatal("TAILSCALE_STORAGE_FAILED: ", err)
     }
+    fmt.Println("STORAGE_READY=Windows Tailscale configuration and node identity prepared")
     if len(os.Args) > 1 && os.Args[1] == "--diagnostic-storage" {
         fmt.Println("STORAGE_TEST_OK")
         return
