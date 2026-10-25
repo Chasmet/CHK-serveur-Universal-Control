@@ -28,7 +28,10 @@ function fake() {
 }
 test("crypto tools never expose orders and every declared tool is read-only",()=>{
   assert.deepEqual(cryptoToolDefinitions.map(x=>x.name),[
-    "crypto_status","crypto_scan_bybit","crypto_portfolio_snapshot","crypto_tracking_status"]);
+    "crypto_chart_analysis","crypto_multi_timeframes","crypto_news_search",
+    "crypto_public_page","crypto_app_diagnostics","crypto_market_watch_status",
+    "crypto_bot_rules_summary","crypto_status","crypto_scan_bybit",
+    "crypto_portfolio_snapshot","crypto_tracking_status"]);
   assert.ok(cryptoToolDefinitions.every(x=>x.readOnlyHint));
   assert.ok(!cryptoToolDefinitions.some(x=>/trade|cancel|withdraw/i.test(x.name)));
 });
@@ -70,6 +73,9 @@ test("Without pairing no private tasks; only approved read-only capabilities que
   assert.deepEqual(x.tasks[0].args,{});
   await x.module.run("crypto_tracking_status");
   assert.equal(x.tasks[1].action,"tracking_status");
+  await x.module.run("crypto_app_diagnostics");
+  assert.equal(x.tasks[2].action,"app_diagnostics");
+  assert.deepEqual(x.tasks[2].args,{});
 });
 test("reject Bybit partial Spot catalogue with unexpected cursor",async()=>{
   const store={listApps:()=>[],submit:async()=>null};
