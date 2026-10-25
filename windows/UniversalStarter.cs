@@ -16,6 +16,7 @@ using System.Windows.Forms;
 using System.Web.Script.Serialization;
 using Microsoft.Win32;
 using System.Collections.Generic;
+using System.ComponentModel;
 
 namespace CHKUniversalControl
 {
@@ -48,7 +49,7 @@ namespace CHKUniversalControl
 
     sealed class MainPanel : Form
     {
-        const string Version = "0.7.0";
+        const string Version = "0.8.0";
         static readonly string Root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CHKUniversalControl");
         static readonly string Runtime = Path.Combine(Root, "runtime-v" + Version);
@@ -313,8 +314,15 @@ namespace CHKUniversalControl
                     InstallResources();
                     StartNode(false);
                     StartBridge();
-                    SaveStartup();
-                    UpdateStatus("MCP local actif. Le nouveau nœud Tailscale va demander son autorisation si nécessaire.");
+                    // Autostart is optional: security software can deny copying a new
+                    // unsigned EXE or updating the registry. Neither failure should
+                    // take down the already-running, healthy local MCP server.
+                    try { SaveStartup(); }
+                    catch (Exception e) {
+                        Log("AUTO_START_OPTIONAL_FAILED " + e.ToString());
+                        UpdateStatus("Serveur actif. Démarrage automatique Windows non installé : " + e.Message);
+                    }
+                    UpdateStatus("MCP local actif. Tunnel existant conservé, aucune nouvelle identité Tailscale nécessaire.");
                 } catch(Exception e) { ShowError(e); }
                 finally { lock(sync) { busy = false; } }
             });
@@ -366,35 +374,83 @@ namespace CHKUniversalControl
             throw new Exception("Le MCP local n'a pas répondu après démarrage.");
         }
 
-        void StartBridge() {
-            if (bridge != null && !bridge.HasExited) return;
-            var info = new ProcessStartInfo(BridgeFile, "") {
-                UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
-                WorkingDirectory = Runtime, RedirectStandardOutput = true, RedirectStandardError = true
-            };
-            info.EnvironmentVariables["CHK_UNIVERSAL_HOME"] = Root;
-            lock(sync) { lastBridgeError = ""; authUrl = ""; }
-            bridge = new Process { StartInfo = info, EnableRaisingEvents = true };
-            bridge.OutputDataReceived += delegate(object _, DataReceivedEventArgs e) { if (e.Data != null) ProcessBridgeLog(e.Data); };
-            bridge.ErrorDataReceived += delegate(object _, DataReceivedEventArgs e) { if (e.Data != null) ProcessBridgeLog(e.Data); };
-            var launchedBridge = bridge;
-            bridge.Exited += delegate {
-                // ErrorDataReceived may finish after Exited; show the actionable
-                // error from the latest Tailscale message instead of a generic notice.
-                Thread.Sleep(300);
-                string reason;
-                lock (sync) { reason = lastBridgeError; }
-                int code;
-                try { code = launchedBridge.ExitCode; } catch { code = -1; }
-                var detail = "Le tunnel indépendant s'est arrêté (code " + code + ")" +
-                    (String.IsNullOrEmpty(reason) ? ". Clique sur VOIR LES ERREURS ET LE DIAGNOSTIC." :
-                      " : " + reason);
-                Log(detail);
-                UpdateStatus(detail);
-            };
-            if (!bridge.Start()) throw new Exception("Impossible de démarrer l'identité Tailscale indépendante.");
-            bridge.BeginOutputReadLine(); bridge.BeginErrorReadLine();
+        // A Process instance for which Process.Start failed has no OS process attached.
+        // HasExited throws InvalidOperationException in that state. Never retain it.
+        static bool IsProcessRunning(Process process)
+        {
+            if (process == null) return false;
+            try { return !process.HasExited; }
+            catch (InvalidOperationException) { return false; }
+            catch (Win32Exception) { return false; }
         }
+        void StartBridge()
+        {
+            if (IsProcessRunning(bridge)) return;
+            // A previous version's verified bridge works and uses the same
+            // persistent tsnet identity. Reuse it when present instead of
+            // triggering a second download/security scan or new Tailscale node.
+            string workingBridge = Path.Combine(Root, "runtime-v0.6.0", "tailscale-bridge.exe");
+            string[] binaries = File.Exists(workingBridge) && 
+                !String.Equals(workingBridge, BridgeFile, StringComparison.OrdinalIgnoreCase)
+                    ? new[] { workingBridge, BridgeFile }
+                    : new[] { BridgeFile };
+            var failures = new List<string>();
+            lock (sync) { lastBridgeError = ""; authUrl = ""; }
+            bridge = null;
+            foreach (var path in binaries)
+            {
+                var info = new ProcessStartInfo(path, "") {
+                    UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
+                    WorkingDirectory = Path.GetDirectoryName(path),
+                    RedirectStandardOutput = true, RedirectStandardError = true
+                };
+                info.EnvironmentVariables["CHK_UNIVERSAL_HOME"] = Root;
+                var candidate = new Process { StartInfo = info, EnableRaisingEvents = true };
+                try
+                {
+                    if (!candidate.Start()) throw new InvalidOperationException("Process.Start a refusé le lancement.");
+                    // Only retain a process that Windows actually started.
+                    bridge = candidate;
+                    bridge.OutputDataReceived += delegate(object _, DataReceivedEventArgs e) {
+                        if (e.Data != null) ProcessBridgeLog(e.Data);
+                    };
+                    bridge.ErrorDataReceived += delegate(object _, DataReceivedEventArgs e) {
+                        if (e.Data != null) ProcessBridgeLog(e.Data);
+                    };
+                    var launchedBridge = bridge;
+                    bridge.Exited += delegate {
+                        Thread.Sleep(300);
+                        string reason;
+                        lock (sync) { reason = lastBridgeError; }
+                        int code;
+                        try { code = launchedBridge.ExitCode; } catch { code = -1; }
+                        var detail = "Le tunnel Tailscale s'est arrêté (code " + code + ")" +
+                            (String.IsNullOrEmpty(reason) ? ". Ouvre le diagnostic." : " : " + reason);
+                        Log(detail);
+                        UpdateStatus(detail);
+                    };
+                    bridge.BeginOutputReadLine();
+                    bridge.BeginErrorReadLine();
+                    UpdateStatus(String.Equals(path, workingBridge, StringComparison.OrdinalIgnoreCase) ?
+                        "Tunnel Tailscale éprouvé de la version 0.6.0 relancé ; identité conservée." :
+                        "Tunnel Tailscale lancé ; identité existante conservée.");
+                    return;
+                }
+                catch (Exception e)
+                {
+                    string message = Path.GetFileName(path) + " : " + e.Message;
+                    Log("BRIDGE_LAUNCH_FAILED " + path + " " + e.ToString());
+                    failures.Add(message);
+                    try { if (candidate.StartInfo != null) candidate.Dispose(); } catch {}
+                    bridge = null;
+                }
+            }
+            throw new InvalidOperationException(
+                "Windows refuse le moteur Tailscale. " + String.Join(" / ", failures.ToArray()) +
+                ". La version 0.6.0 fonctionne : ne supprime pas ses dossiers ni ses clés. " +
+                "Regarde la sécurité du fichier dans Windows/Avast CyberCapture.");
+        }
+        
         void ProcessBridgeLog(string text) {
             Log("TSNET " + text);
             if (text.StartsWith("STORAGE_READY=")) {
@@ -498,7 +554,7 @@ namespace CHKUniversalControl
                         throw new Exception("Missing required files in packaged Windows executable");
                 }
             }
-            if(Version!="0.7.0")throw new Exception("Incorrect Windows launcher version");
+            if(Version!="0.8.0")throw new Exception("Incorrect Windows launcher version");
         }
     }
 }
