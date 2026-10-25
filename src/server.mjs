@@ -5,6 +5,7 @@ import { Store, clean, safeEqual } from "./core.mjs";
 import { createSecurity } from "./security.mjs";
 import { createAI } from "./ai.mjs";
 import { createMCP } from "./mcp.mjs";
+import { createGodotBridge } from "./godot.mjs";
 
 const baseConfig = () => ({
   port: Number(process.env.PORT || 8787), host: process.env.HOST || "127.0.0.1",
@@ -37,6 +38,7 @@ export async function buildServer(opts = {}) {
   const store = await new Store(config.file).init();
   const security = createSecurity(config, store);
   const ai = createAI(config, store);
+  const godot = createGodotBridge();
   const loginFailures = new Map();
   async function legacyCall(tool, args) {
     if (!config.legacyUrl) throw Error("legacy_not_configured");
@@ -58,6 +60,16 @@ export async function buildServer(opts = {}) {
   }
   async function approveTask(id) {
     const job = await store.approve(id);
+    if (job.app_id === "godot-local") {
+      // A write never repeats silently after a lost or timed-out response.
+      await store.markLegacy(id, null, "leased");
+      try {
+        const result = await godot.execute(job.action, job.args);
+        return await store.markLegacy(id, result, result.ok === false ? "failed" : "completed");
+      } catch (error) {
+        return await store.markLegacy(id, { error: String(error.message).slice(0, 160), execution_state: "unknown", retry_command: false }, "unknown");
+      }
+    }
     if (job.app_id !== "chk-legacy") return job;
     // Mark as executing before outbound call: timeout/crash must NOT auto-repeat a write.
     await store.markLegacy(id, null, "leased");
@@ -68,7 +80,7 @@ export async function buildServer(opts = {}) {
       return await store.markLegacy(id, { error: e.message, execution_state: "unknown", retry_command: false }, "unknown");
     }
   }
-  const mcp = createMCP(config, store, security, ai, legacyCall, approveTask);
+  const mcp = createMCP(config, store, security, ai, legacyCall, approveTask, godot);
   const json = security.json;
   const server = httpServer(async (req, res) => {
     res.setHeader("x-content-type-options", "nosniff");
