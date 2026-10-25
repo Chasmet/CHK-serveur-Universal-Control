@@ -7,9 +7,16 @@
 const BASE = "https://api.bybit.eu";
 const CACHE_MS = 60_000;
 const NAME = "CHK Crypto Analyse 2";
-const READ_CAPABILITIES = new Set(["portfolio_snapshot", "tracking_status"]);
+const READ_CAPABILITIES = new Set(["portfolio_snapshot", "tracking_status", "app_diagnostics", "market_watch_status", "bot_rules_summary"]);
 
 export const cryptoToolDefinitions = [
+  { name: "crypto_chart_analysis", title: "CHK Crypto - analyse graphique", description: "Analyse les 200 dernières bougies Spot Bybit EU d’une paire et d’une unité de temps: RSI 14, EMA 20/50, MACD, bandes de Bollinger, ATR, supports/résistances. Aucune exécution d’ordre.", inputSchema: {type:"object",required:["symbol"],properties:{symbol:{type:"string"},timeframe:{type:"string",description:"1, 5, 15, 60, 240, D, W..."}}},readOnlyHint:true },
+  { name: "crypto_multi_timeframes", title: "CHK Crypto - analyse multi-unités", description: "Analyse indépendante d'une paire sur 1 à 6 unités de temps Bybit Spot. Convergence indicative des indicateurs, sans ordres.", inputSchema:{type:"object",required:["symbol"],properties:{symbol:{type:"string"},timeframes:{type:"array",items:{type:"string"},maxItems:6}}},readOnlyHint:true },
+  { name: "crypto_news_search", title: "CHK Crypto - recherche actualités", description: "Recherche des nouvelles publiques sur Internet via un moteur d'actualités. Toujours recouper les informations externes.",inputSchema:{type:"object",properties:{query:{type:"string"},limit:{type:"integer",minimum:1,maximum:15}}},readOnlyHint:true },
+  { name: "crypto_public_page", title: "CHK Crypto - consulter site public", description: "Ouvre en lecture seule un article public d'un domaine financier autorisé; interdit toute URL locale, privée ou arbitraire.",inputSchema:{type:"object",required:["url"],properties:{url:{type:"string"}}},readOnlyHint:true },
+  { name: "crypto_app_diagnostics", title: "CHK Crypto - diagnostic Android", description: "Demande le diagnostic réseau et la version de CHK Crypto Android, lecture seule. Utiliser task_get.",inputSchema:{type:"object",properties:{request_id:{type:"string"}}},readOnlyHint:true },
+  { name: "crypto_market_watch_status", title: "CHK Crypto - suivi marchés Android", description: "Vérifie si le suivi en tâche de fond du téléphone est activé et connecté, sans modifier les règles. Utiliser task_get.",inputSchema:{type:"object",properties:{request_id:{type:"string"}}},readOnlyHint:true },
+  { name: "crypto_bot_rules_summary", title: "CHK Crypto - règles Bot", description: "Résumé en lecture seule des règles locales de surveillance de CHK Crypto, sans commandes de trading. Utiliser task_get.",inputSchema:{type:"object",properties:{request_id:{type:"string"}}},readOnlyHint:true },
   { name: "crypto_status", title: "CHK Crypto Analyse 2 - connexion", description: "Vérifie si l'application CHK Crypto Android est appairée et a récemment contacté le serveur universel.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "crypto_scan_bybit", title: "CHK Crypto - scan complet Bybit Spot", description: "Scanne TOUT le catalogue public Bybit EU Spot (toutes les cryptos/paires disponibles), et tous les tickers. Filtre et classe éventuellement les résultats ; n'envoie aucun ordre. Les ordres réels restent dans CHK Crypto Android avec confirmation utilisateur.", inputSchema: { type: "object", properties: {
     quote: { type: "string", enum: ["ALL", "USDC", "USDT"], description: "Filtre de devise après scan global, défaut ALL" },
@@ -34,7 +41,7 @@ function filteredArgs(input = {}) {
   if (!Number.isFinite(minTurnoverUsd) || minTurnoverUsd < 0) throw Error("crypto_invalid_turnover");
   return {quote, limit, minTurnoverUsd};
 }
-export function createCryptoModule({store, fetchImpl = fetch, now = Date.now, cacheMs = CACHE_MS} = {}) {
+export function createCryptoModule({store, fetchImpl = fetch, now = Date.now, cacheMs = CACHE_MS, intelligence} = {}) {
   let cache = null;
   let loading = null;
   function androidApp() {
@@ -136,10 +143,17 @@ export function createCryptoModule({store, fetchImpl = fetch, now = Date.now, ca
           paired:Boolean(app),androidOnline:Boolean(app?.online),
           lastSeen:app?.last_seen || null,
           publicMarketScanAvailable:true,
-          localAgentActions:["portfolio_snapshot","tracking_status"],
+          localAgentActions:[...READ_CAPABILITIES],
           execution:"READ_ONLY",realOrders:"NOT_AVAILABLE_IN_THIS_MODULE"};
       }
       if (name==="crypto_scan_bybit") return scan(args);
+      if (name==="crypto_chart_analysis") return intelligence.chart(args);
+      if (name==="crypto_multi_timeframes") return intelligence.multi(args);
+      if (name==="crypto_news_search") return intelligence.news(args);
+      if (name==="crypto_public_page") return intelligence.openPublicPage(args);
+      if (name==="crypto_app_diagnostics") return queue("app_diagnostics",args);
+      if (name==="crypto_market_watch_status") return queue("market_watch_status",args);
+      if (name==="crypto_bot_rules_summary") return queue("bot_rules_summary",args);
       if (name==="crypto_portfolio_snapshot") return queue("portfolio_snapshot",args);
       if (name==="crypto_tracking_status") return queue("tracking_status",args);
       throw Error("crypto_unknown_tool");
