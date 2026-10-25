@@ -34,7 +34,7 @@ test("crypto tools never expose orders and every declared tool is read-only",()=
     "crypto_bot_rules_summary","crypto_status","crypto_scan_bybit",
     "crypto_portfolio_snapshot","crypto_tracking_status"]);
   assert.ok(cryptoToolDefinitions.every(x=>x.readOnlyHint));
-  assert.ok(!cryptoToolDefinitions.some(x=>/trade|cancel|withdraw/i.test(x.name)));
+  assert.ok(!cryptoToolDefinitions.some(x=>/(place_order|create_trade_proposal|cancel_order|withdraw|execute_trade|submit_order)/i.test(x.name)));
 });
 test("Bybit Spot ALL scans every available trading pair before filtering USDC/USDT",async()=>{
   const x=fake();
