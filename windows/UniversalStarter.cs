@@ -48,7 +48,7 @@ namespace CHKUniversalControl
 
     sealed class MainPanel : Form
     {
-        const string Version = "0.3.0";
+        const string Version = "0.3.1";
         static readonly string Root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CHKUniversalControl");
         static readonly string Runtime = Path.Combine(Root, "runtime-v" + Version);
@@ -75,6 +75,7 @@ namespace CHKUniversalControl
         string nodeBaseUrl = "";
         bool busy = false;
         bool exiting = false;
+        string lastBridgeError = "";
 
         public MainPanel()
         {
@@ -280,7 +281,7 @@ namespace CHKUniversalControl
                     StartNode(false);
                     StartBridge();
                     SaveStartup();
-                    UpdateStatus("Serveur local actif. Autorise la nouvelle identité Tailscale si un bouton apparaît.");
+                    UpdateStatus("MCP local actif. Le nouveau nœud Tailscale va demander son autorisation si nécessaire.");
                 } catch(Exception e) { ShowError(e); }
                 finally { lock(sync) { busy = false; } }
             });
@@ -339,18 +340,43 @@ namespace CHKUniversalControl
                 WorkingDirectory = Runtime, RedirectStandardOutput = true, RedirectStandardError = true
             };
             info.EnvironmentVariables["CHK_UNIVERSAL_HOME"] = Root;
+            lock(sync) { lastBridgeError = ""; authUrl = ""; }
             bridge = new Process { StartInfo = info, EnableRaisingEvents = true };
             bridge.OutputDataReceived += delegate(object _, DataReceivedEventArgs e) { if (e.Data != null) ProcessBridgeLog(e.Data); };
             bridge.ErrorDataReceived += delegate(object _, DataReceivedEventArgs e) { if (e.Data != null) ProcessBridgeLog(e.Data); };
+            var launchedBridge = bridge;
             bridge.Exited += delegate {
-                Log("Tailscale indépendant s'est arrêté : code " + bridge.ExitCode);
-                UpdateStatus("Le tunnel Tailscale indépendant s'est arrêté. Clique sur INSTALLER / DÉMARRER pour réessayer.");
+                // ErrorDataReceived may finish after Exited; show the actionable
+                // error from the latest Tailscale message instead of a generic notice.
+                Thread.Sleep(300);
+                string reason;
+                lock (sync) { reason = lastBridgeError; }
+                int code;
+                try { code = launchedBridge.ExitCode; } catch { code = -1; }
+                var detail = "Le tunnel indépendant s'est arrêté (code " + code + ")" +
+                    (String.IsNullOrEmpty(reason) ? ". Clique sur VOIR LES ERREURS ET LE DIAGNOSTIC." :
+                      " : " + reason);
+                Log(detail);
+                UpdateStatus(detail);
             };
             if (!bridge.Start()) throw new Exception("Impossible de démarrer l'identité Tailscale indépendante.");
             bridge.BeginOutputReadLine(); bridge.BeginErrorReadLine();
         }
         void ProcessBridgeLog(string text) {
             Log("TSNET " + text);
+            if (text.StartsWith("STATE=awaiting_tailscale_authorization")) {
+                UpdateStatus("Nouveau serveur Tailscale en préparation. Une autorisation peut être nécessaire.");
+            }
+            if (text.StartsWith("STATE=tailscale_authenticated")) {
+                UpdateStatus("Nouvelle identité Tailscale authentifiée. Ouverture HTTPS 443...");
+            }
+            if (text.Contains("TAILSCALE_START_FAILED") || text.Contains("TAILSCALE_LOGIN_FAILED") ||
+                text.Contains("TAILSCALE_DNS_NOT_READY") || text.Contains("FUNNEL_443_FAILED") ||
+                text.Contains("FUNNEL_HTTP_FAILED") || text.Contains("TAILSCALE_INVALID_DOMAIN") ||
+                text.Contains("panic:") || text.Contains("fatal error:")) {
+                lock (sync) { lastBridgeError = text.Length > 300 ? text.Substring(0, 300) : text; }
+                UpdateStatus("Diagnostic du tunnel : " + text);
+            }
             var auth = Regex.Match(text, @"https://login\.tailscale\.com/[A-Za-z0-9/_?=.-]+");
             if (auth.Success) {
                 lock(sync) { authUrl = auth.Value; }
@@ -415,7 +441,7 @@ namespace CHKUniversalControl
                         throw new Exception("Missing required files in packaged Windows executable");
                 }
             }
-            if(Version!="0.3.0")throw new Exception("Incorrect Windows launcher version");
+            if(Version!="0.3.1")throw new Exception("Incorrect Windows launcher version");
         }
     }
 }
