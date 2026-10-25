@@ -48,7 +48,7 @@ namespace CHKUniversalControl
 
     sealed class MainPanel : Form
     {
-        const string Version = "0.6.0";
+        const string Version = "0.7.0";
         static readonly string Root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CHKUniversalControl");
         static readonly string Runtime = Path.Combine(Root, "runtime-v" + Version);
@@ -494,11 +494,11 @@ namespace CHKUniversalControl
                 using(var zip=new ZipArchive(input, ZipArchiveMode.Read)) {
                     if(zip.GetEntry("node.exe")==null || zip.GetEntry("tailscale-bridge.exe")==null ||
                         zip.GetEntry("src/server.mjs")==null || zip.GetEntry("src/godot.mjs")==null ||
-                        zip.GetEntry("public/chat.html")==null)
+                        zip.GetEntry("public/chat.html")==null || zip.GetEntry("public/oauth-login.js")==null)
                         throw new Exception("Missing required files in packaged Windows executable");
                 }
             }
-            if(Version!="0.6.0")throw new Exception("Incorrect Windows launcher version");
+            if(Version!="0.7.0")throw new Exception("Incorrect Windows launcher version");
         }
     }
 }
