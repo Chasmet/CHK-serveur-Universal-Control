@@ -10,6 +10,10 @@ const NAME = "CHK Crypto Analyse 2";
 const READ_CAPABILITIES = new Set(["portfolio_snapshot", "tracking_status", "app_diagnostics", "market_watch_status", "bot_rules_summary"]);
 
 export const cryptoToolDefinitions = [
+  {name:"crypto_ticker",title:"CHK Crypto - cours Spot Bybit",description:"Dernier prix, spread best bid/ask, variation et volumes 24h d'une crypto Spot Bybit EU. Lecture seule, sans ordre.",inputSchema:{type:"object",required:["symbol"],properties:{symbol:{type:"string"}}},readOnlyHint:true},
+  {name:"crypto_orderbook",title:"CHK Crypto - carnet d'ordres",description:"Analyse des murs de liquidité, spread, profondeur publique, équilibre bids/asks sur Bybit EU Spot. Lecture seule, pas de trading.",inputSchema:{type:"object",required:["symbol"],properties:{symbol:{type:"string"},depth:{type:"integer",enum:[1,50,200]}}},readOnlyHint:true},
+  {name:"crypto_recent_trades",title:"CHK Crypto - flux transactions",description:"Analyse du flux de transactions publiques récentes Spot: achats/ventes, volumes, prix. Aucun ordre réel.",inputSchema:{type:"object",required:["symbol"],properties:{symbol:{type:"string"},limit:{type:"integer",minimum:1,maximum:200}}},readOnlyHint:true},
+  {name:"crypto_instrument_rules",title:"CHK Crypto - règles de cotation",description:"Récupère la paire Spot Bybit EU, pas de quantité, prix minimum, minimum de commande. Information uniquement.",inputSchema:{type:"object",required:["symbol"],properties:{symbol:{type:"string"}}},readOnlyHint:true},
   { name: "crypto_chart_analysis", title: "CHK Crypto - analyse graphique", description: "Analyse les 200 dernières bougies Spot Bybit EU d’une paire et d’une unité de temps: RSI 14, EMA 20/50, MACD, bandes de Bollinger, ATR, supports/résistances. Aucune exécution d’ordre.", inputSchema: {type:"object",required:["symbol"],properties:{symbol:{type:"string"},timeframe:{type:"string",description:"1, 5, 15, 60, 240, D, W..."}}},readOnlyHint:true },
   { name: "crypto_multi_timeframes", title: "CHK Crypto - analyse multi-unités", description: "Analyse indépendante d'une paire sur 1 à 6 unités de temps Bybit Spot. Convergence indicative des indicateurs, sans ordres.", inputSchema:{type:"object",required:["symbol"],properties:{symbol:{type:"string"},timeframes:{type:"array",items:{type:"string"},maxItems:6}}},readOnlyHint:true },
   { name: "crypto_news_search", title: "CHK Crypto - recherche actualités", description: "Recherche des nouvelles publiques sur Internet via un moteur d'actualités. Toujours recouper les informations externes.",inputSchema:{type:"object",properties:{query:{type:"string"},limit:{type:"integer",minimum:1,maximum:15}}},readOnlyHint:true },
@@ -147,6 +151,10 @@ export function createCryptoModule({store, fetchImpl = fetch, now = Date.now, ca
           execution:"READ_ONLY",realOrders:"NOT_AVAILABLE_IN_THIS_MODULE"};
       }
       if (name==="crypto_scan_bybit") return scan(args);
+      if (name==="crypto_ticker") return intelligence.ticker(args);
+      if (name==="crypto_orderbook") return intelligence.orderbook(args);
+      if (name==="crypto_recent_trades") return intelligence.recentTrades(args);
+      if (name==="crypto_instrument_rules") return intelligence.instrumentRules(args);
       if (name==="crypto_chart_analysis") return intelligence.chart(args);
       if (name==="crypto_multi_timeframes") return intelligence.multi(args);
       if (name==="crypto_news_search") return intelligence.news(args);
