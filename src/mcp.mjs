@@ -1,4 +1,5 @@
 import { cryptoToolDefinitions, createCryptoModule } from "./crypto.mjs";
+import {createCryptoIntelligence} from "./crypto-analysis.mjs";
 
 const tools = [
   { name: "godot_status", title: "Pirate Warrior 2 - état", description: "Vérifie la connexion à l’éditeur Godot réel sur le PC, sans prétendre qu’une tâche est terminée.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
@@ -23,7 +24,9 @@ function exposedTools() {
   }));
 }
 export function createMCP(config, store, security, ai, legacyCall, approveTask, godot) {
-  const crypto = createCryptoModule({store, fetchImpl: config.cryptoFetch || globalThis.fetch});
+  const cryptoFetch = config.cryptoFetch || globalThis.fetch;
+  const intelligence = createCryptoIntelligence({fetchImpl:cryptoFetch});
+  const crypto = createCryptoModule({store, fetchImpl:cryptoFetch, intelligence});
   const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "godot_run", "godot_batch"]);
   return async function handle(rpc, req, res) {
     if (!rpc || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string" || Array.isArray(rpc)) {
