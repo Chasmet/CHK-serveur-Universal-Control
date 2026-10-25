@@ -1,3 +1,5 @@
+import { cryptoToolDefinitions, createCryptoModule } from "./crypto.mjs";
+
 const tools = [
   { name: "godot_status", title: "Pirate Warrior 2 - état", description: "Vérifie la connexion à l’éditeur Godot réel sur le PC, sans prétendre qu’une tâche est terminée.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "godot_run", title: "Pirate Warrior 2 - commande", description: "Prépare une commande Godot, à approuver dans le panneau local avant son exécution réelle.", inputSchema: { type: "object", required: ["method"], properties: { method: { type: "string" }, params: { type: "object" }, request_id: { type: "string" } } } },
@@ -11,7 +13,7 @@ const tools = [
   { name: "task_cancel", title: "Annuler commande", description: "Annule une tâche encore non exécutée.", inputSchema: { type: "object", required: ["task_id"], properties: { task_id: { type: "string" } } } },
   { name: "ai_chat", title: "Assistant Qwen open source", description: "Pose une question au modèle local via Ollama et orchestre des outils disponibles. Modèle externe optionnel.", inputSchema: { type: "object", required: ["message"], properties: { message: { type: "string" } } } },
   { name: "chk_read", title: "CHK existant: lecture", description: "Interroge uniquement server_info ou android_status de la passerelle MCP CHK existante, si configurée.", inputSchema: { type: "object", properties: { name: { type: "string", enum: ["server_info", "android_status"] } } }, readOnlyHint: true }
-];
+].concat(cryptoToolDefinitions);
 const textResult = obj => ({ content: [{ type: "text", text: JSON.stringify(obj) }], structuredContent: obj, isError: Boolean(obj?.error) });
 function exposedTools() {
   return tools.map(({ readOnlyHint, ...tool }) => ({
@@ -21,6 +23,7 @@ function exposedTools() {
   }));
 }
 export function createMCP(config, store, security, ai, legacyCall, approveTask, godot) {
+  const crypto = createCryptoModule({store, fetchImpl: config.cryptoFetch || globalThis.fetch});
   const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "godot_run", "godot_batch"]);
   return async function handle(rpc, req, res) {
     if (!rpc || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string" || Array.isArray(rpc)) {
@@ -46,8 +49,9 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
           const { request_id, ...args } = a;
           output = await store.submit({ app_id: "godot-local", action: name, args, source: "mcp", request_id });
         }
+        else if (cryptoToolDefinitions.some(tool => tool.name === name)) output = await crypto.run(name, a);
         else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: store.listApps(Boolean(config.legacyUrl)).length, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl) };
-        else if (name === "apps_list") output = store.listApps(Boolean(config.legacyUrl));
+        else if (name === "apps_list") output = { apps: store.listApps(Boolean(config.legacyUrl)) };
         else if (name === "app_register") output = await store.registerApp(a);
         else if (name === "app_invite") output = await store.createInvite();
         else if (name === "task_submit") output = await store.submit({ ...a, source: "mcp", legacy: Boolean(config.legacyUrl) });
