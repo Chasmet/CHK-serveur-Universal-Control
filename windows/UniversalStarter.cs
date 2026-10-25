@@ -194,7 +194,9 @@ namespace CHKUniversalControl
                 if (!exiting && e.CloseReason == CloseReason.UserClosing) {
                     // Never make the window unexpectedly disappear during login.
                     e.Cancel = true;
-                    ShowWindow();
+                    WindowState = FormWindowState.Normal;
+                    ShowInTaskbar = true;
+                    Activate();
                     UpdateStatus("La fenêtre reste ouverte. Pour quitter : icône près de l'horloge Windows > Quitter.");
                 } else {
                     tick.Stop(); tray.Visible = false;
@@ -206,7 +208,7 @@ namespace CHKUniversalControl
             tick.Tick += delegate {
                 lock(sync) {
                     // Leave authorization usable, including while the URL is loading.
-                    authorize.Enabled = true;
+                    authorize.Enabled = String.IsNullOrEmpty(publicUrl);
                     copy.Enabled = !String.IsNullOrEmpty(publicUrl);
                 }
             };
