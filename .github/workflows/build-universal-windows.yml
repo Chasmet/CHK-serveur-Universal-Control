@@ -1,0 +1,108 @@
+name: CHK Universal - serveur Windows Tailscale 443 indépendant
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/pc-local-universal-pirate-warrior-20261025
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'windows/**'
+      - '.github/workflows/build-universal-windows.yml'
+      - 'package.json'
+permissions:
+  contents: read
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: Vérifier serveur MCP multi-applications et Pirate Warrior 2
+        shell: pwsh
+        run: |
+          npm run check
+          if ($LASTEXITCODE -ne 0) { throw 'Server syntax error' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Server integration tests failed' }
+      - name: Compiler la deuxième identité Tailscale Windows
+        shell: pwsh
+        working-directory: windows/tsbridge
+        run: |
+          go mod init chk-universal-tsbridge
+          if ($LASTEXITCODE -ne 0) { throw 'go mod init failed' }
+          go get tailscale.com@v1.104.2
+          if ($LASTEXITCODE -ne 0) { throw 'Go dependency failed' }
+          go mod tidy
+          if ($LASTEXITCODE -ne 0) { throw 'Go tidy failed' }
+          go test -v .
+          if ($LASTEXITCODE -ne 0) { throw 'Tailscale bridge tests failed' }
+          New-Item -ItemType Directory -Force '../runtime' | Out-Null
+          go build -trimpath -ldflags '-s -w' -o '../runtime/tailscale-bridge.exe' .
+          if ($LASTEXITCODE -ne 0) { throw 'Tailscale bridge build failed' }
+      - name: Emballer Node, Tailscale et le MCP universel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force 'windows/runtime/src','windows/runtime/public' | Out-Null
+          $node=(Get-Command node).Source
+          Copy-Item $node 'windows/runtime/node.exe'
+          Copy-Item 'src/*.mjs' 'windows/runtime/src/'
+          Copy-Item 'public/*.html' 'windows/runtime/public/'
+          Copy-Item 'public/*.js' 'windows/runtime/public/'
+          Copy-Item 'package.json' 'windows/runtime/'
+          if (!(Test-Path 'windows/runtime/tailscale-bridge.exe')) { throw 'Tailscale executable missing' }
+          Compress-Archive -Path 'windows/runtime/*' -DestinationPath 'windows/runtime.zip' -Force
+          if (!(Test-Path 'windows/runtime.zip')) { throw 'Package archive missing' }
+      - name: Compiler et tester le vrai programme Windows natif
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework/v4.0.30319/csc.exe'
+          if (!(Test-Path $csc)) { throw 'Windows native compiler missing' }
+          New-Item -ItemType Directory -Force 'dist' | Out-Null
+          $exe=(Join-Path (Get-Location).Path 'dist/CHK-Universal-Control-Windows.exe')
+          $archive=(Join-Path (Get-Location).Path 'windows/runtime.zip')
+          & $csc /nologo /target:winexe /platform:anycpu /optimize+ "/out:$exe" '/reference:System.dll' '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' '/reference:System.Web.Extensions.dll' '/reference:System.IO.Compression.dll' '/reference:System.IO.Compression.FileSystem.dll' "/resource:$archive,chk.runtime" 'windows/UniversalStarter.cs'
+          if ($LASTEXITCODE -ne 0) { throw 'Windows launcher compilation failed' }
+          $bytes=[System.IO.File]::ReadAllBytes($exe)
+          if ($bytes.Length -lt 100000 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw 'Invalid Windows executable (PE)' }
+          $test=Start-Process -FilePath $exe -ArgumentList '--self-test' -Wait -PassThru
+          if ($test.ExitCode -ne 0) { throw ('Real EXE self-test failed: ' + $test.ExitCode) }
+          Write-Output 'Windows EXE validated: Node, independent Tailscale bridge, MCP files'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHK-Universal-Control-Windows-v0.3.0
+          path: dist/CHK-Universal-Control-Windows.exe
+          if-no-files-found: error
+          retention-days: 30
+  release:
+    if: github.ref == 'refs/heads/feature/pc-local-universal-pirate-warrior-20261025'
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: CHK-Universal-Control-Windows-v0.3.0
+          path: release
+      - name: Publier le vrai programme Windows natif
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test -s release/CHK-Universal-Control-Windows.exe
+          TAG="chk-universal-windows-v0.3.0"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/CHK-Universal-Control-Windows.exe --clobber
+          else
+            gh release create "$TAG" release/CHK-Universal-Control-Windows.exe --title "CHK Universal Control Windows 0.3.0" --notes "Vrai EXE Windows incluant Node, serveur MCP universel autonome, seconde identité Tailscale tsnet sur HTTPS 443, sans toucher aux ports existants de PC-SALON. Une autorisation Tailscale lors de la première installation. Pirate Warrior 2 est la première application."
+          fi
