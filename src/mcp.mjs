@@ -1,4 +1,5 @@
 import { cryptoTools } from "./crypto.mjs";
+import { asReadOnly as cryptoMarketTools } from "./crypto-markets.mjs";
 
 const tools = [
   { name: "godot_status", title: "Pirate Warrior 2 - état", description: "Vérifie la connexion à l’éditeur Godot réel sur le PC, sans prétendre qu’une tâche est terminée.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
@@ -16,13 +17,13 @@ const tools = [
 ];
 const textResult = obj => ({ content: [{ type: "text", text: JSON.stringify(obj) }], structuredContent: obj, isError: Boolean(obj?.error) });
 function exposedTools() {
-  return [...tools,...cryptoTools].map(({ readOnlyHint, ...tool }) => ({
+  return [...tools,...cryptoTools,...cryptoMarketTools].map(({ readOnlyHint, ...tool }) => ({
     ...tool,
     annotations: { readOnlyHint: Boolean(readOnlyHint), destructiveHint: !readOnlyHint, openWorldHint: false },
     securitySchemes: [{ type: "oauth2", scopes: [readOnlyHint ? "mcp:read" : "mcp:write"] }]
   }));
 }
-export function createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto) {
+export function createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto, markets) {
   const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "godot_run", "godot_batch"]);
   return async function handle(rpc, req, res) {
     if (!rpc || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string" || Array.isArray(rpc)) {
@@ -50,6 +51,14 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
         }
         else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: store.listApps(Boolean(config.legacyUrl)).length, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl) };
         else if (name === "apps_list") output = { apps: store.listApps(Boolean(config.legacyUrl)) };
+        else if (name === "crypto_ticker") output = await markets.ticker(a);
+        else if (name === "crypto_orderbook") output = await markets.orderbook(a);
+        else if (name === "crypto_candles") output = await markets.candles(a);
+        else if (name === "crypto_indicators") output = await markets.indicators(a);
+        else if (name === "crypto_multi_timeframe") output = await markets.multi(a);
+        else if (name === "crypto_instrument_rules") output = await markets.rules(a);
+        else if (name === "crypto_market_movers") output = await markets.movers(a);
+        else if (name === "crypto_web_read") output = await markets.webRead(a);
         else if (name === "crypto_status") output = crypto.status();
         else if (name === "crypto_scan_bybit") output = await crypto.scan(a);
         else if (name === "crypto_list_bybit") output = await crypto.page(a);
