@@ -35,8 +35,8 @@ namespace CHKUniversalControl
             {
                 if (!owned)
                 {
-                    MessageBox.Show("CHK Universal Control est déjà lancé sur ce PC. Clique sur son icône près de l'horloge Windows.",
-                        "CHK Universal Control", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show("CHK SERVEUR PC est déjà lancé sur ce PC. Clique sur son icône près de l'horloge Windows.",
+                        "CHK SERVEUR PC", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
                 Application.EnableVisualStyles();
@@ -48,7 +48,7 @@ namespace CHKUniversalControl
 
     sealed class MainPanel : Form
     {
-        const string Version = "0.3.1";
+        const string Version = "0.4.0";
         static readonly string Root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CHKUniversalControl");
         static readonly string Runtime = Path.Combine(Root, "runtime-v" + Version);
@@ -79,7 +79,7 @@ namespace CHKUniversalControl
 
         public MainPanel()
         {
-            Text = "CHK Universal Control - Serveur universel Windows v" + Version;
+            Text = "CHK SERVEUR PC - v" + Version + " - MCP universel";
             Icon = SystemIcons.Application;
             BackColor = Color.FromArgb(13, 23, 40);
             ForeColor = Color.White;
@@ -88,11 +88,11 @@ namespace CHKUniversalControl
             MinimumSize = new Size(600, 640);
             StartPosition = FormStartPosition.CenterScreen;
 
-            var heading = new Label { Text = "CHK UNIVERSAL CONTROL", Left = 22, Top = 20,
+            var heading = new Label { Text = "CHK SERVEUR PC", Left = 22, Top = 20,
                 Width = 630, Height = 38, Font = new Font("Segoe UI", 20F, FontStyle.Bold),
                 ForeColor = Color.FromArgb(100, 210, 250) };
             Controls.Add(heading);
-            var detail = new Label { Text = "100 % exécuté sur ton PC. Tailscale privé existant conservé. Pirate Warrior 2 : première application.",
+            var detail = new Label { Text = "Serveur universel sur ton PC. Pirate Warrior 2 : première application.\nSans Render ni Supabase.",
                 Left = 24, Top = 65, Width = 610, Height = 42, ForeColor = Color.LightGray };
             Controls.Add(detail);
 
@@ -150,7 +150,7 @@ namespace CHKUniversalControl
             Controls.Add(diagnostics);
 
             tray.Icon = SystemIcons.Application;
-            tray.Text = "CHK Universal Control - serveur Windows";
+            tray.Text = "CHK SERVEUR PC";
             tray.Visible = true;
             var menu = new ContextMenuStrip();
             menu.Items.Add("Ouvrir le tableau de bord", null, delegate { OpenBrowser(ChatURL); });
@@ -364,13 +364,19 @@ namespace CHKUniversalControl
         }
         void ProcessBridgeLog(string text) {
             Log("TSNET " + text);
+            if (text.StartsWith("FILE_PROBE_OK=")) {
+                UpdateStatus("Dossier Tailscale vérifié : écriture Windows testée.");
+            }
+            if (text.StartsWith("FILE_PROBE_FAILED=")) {
+                UpdateStatus("Ancien dossier Tailscale inaccessible : recherche d'un dossier sûr.");
+            }
             if (text.StartsWith("STATE=awaiting_tailscale_authorization")) {
                 UpdateStatus("Nouveau serveur Tailscale en préparation. Une autorisation peut être nécessaire.");
             }
             if (text.StartsWith("STATE=tailscale_authenticated")) {
                 UpdateStatus("Nouvelle identité Tailscale authentifiée. Ouverture HTTPS 443...");
             }
-            if (text.Contains("TAILSCALE_START_FAILED") || text.Contains("TAILSCALE_LOGIN_FAILED") ||
+            if (text.Contains("TAILSCALE_STORAGE_FAILED") || text.Contains("TAILSCALE_START_FAILED") || text.Contains("TAILSCALE_LOGIN_FAILED") ||
                 text.Contains("TAILSCALE_DNS_NOT_READY") || text.Contains("FUNNEL_443_FAILED") ||
                 text.Contains("FUNNEL_HTTP_FAILED") || text.Contains("TAILSCALE_INVALID_DOMAIN") ||
                 text.Contains("panic:") || text.Contains("fatal error:")) {
@@ -401,7 +407,7 @@ namespace CHKUniversalControl
             });
         }
         void SaveStartup() {
-            var target = Path.Combine(Root, "CHK-Universal-Control-v" + Version + ".exe");
+            var target = Path.Combine(Root, "CHK-SERVEUR-PC-v" + Version + ".exe");
             if (!File.Exists(target)) File.Copy(Assembly.GetExecutingAssembly().Location, target);
             using(var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
                 key.SetValue("CHKUniversalControl", "\"" + target + "\"", RegistryValueKind.String);
@@ -441,7 +447,7 @@ namespace CHKUniversalControl
                         throw new Exception("Missing required files in packaged Windows executable");
                 }
             }
-            if(Version!="0.3.1")throw new Exception("Incorrect Windows launcher version");
+            if(Version!="0.4.0")throw new Exception("Incorrect Windows launcher version");
         }
     }
 }
