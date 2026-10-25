@@ -17,7 +17,7 @@ export function createCryptoModule(store,{base=ENDPOINT,fetchImpl=globalThis.fet
   let scanInFlight=null;
   let lastFetch=0;
   const name="CHK Crypto Android";
-  function agent(){return Object.values(store.state.apps).find(a=>a.name===name && !a.system && a.secret_hash);}
+  function agent(){return Object.values(store.state.apps).filter(a=>a.name===name && !a.system && a.secret_hash).sort((a,b)=>(b.registered_at||0)-(a.registered_at||0))[0];}
   function status(){
     const a=agent(), age=a?.last_seen?now()-a.last_seen:null;
     return {module:"CHK Crypto",app_id:a?.id||null,registered:Boolean(a),android_online:age!==null&&age<90000,
