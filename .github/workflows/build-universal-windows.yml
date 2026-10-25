@@ -84,7 +84,7 @@ jobs:
           Write-Output 'Windows EXE validated: Node, independent Tailscale bridge, MCP files'
       - uses: actions/upload-artifact@v4
         with:
-          name: CHK-Universal-Control-Windows-v0.3.0
+          name: CHK-Universal-Control-Windows-v0.3.1
           path: dist/CHK-Universal-Control-Windows.exe
           if-no-files-found: error
           retention-days: 30
@@ -97,7 +97,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: CHK-Universal-Control-Windows-v0.3.0
+          name: CHK-Universal-Control-Windows-v0.3.1
           path: release
       - name: Publier le vrai programme Windows natif
         env:
@@ -106,9 +106,9 @@ jobs:
         run: |
           set -euo pipefail
           test -s release/CHK-Universal-Control-Windows.exe
-          TAG="chk-universal-windows-v0.3.0"
+          TAG="chk-universal-windows-v0.3.1"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release/CHK-Universal-Control-Windows.exe --clobber
           else
-            gh release create "$TAG" release/CHK-Universal-Control-Windows.exe --title "CHK Universal Control Windows 0.3.0" --notes "Vrai EXE Windows incluant Node, serveur MCP universel autonome, seconde identité Tailscale tsnet sur HTTPS 443, sans toucher aux ports existants de PC-SALON. Une autorisation Tailscale lors de la première installation. Pirate Warrior 2 est la première application."
+            gh release create "$TAG" release/CHK-Universal-Control-Windows.exe --title "CHK Universal Control Windows 0.3.1" --notes "Vrai EXE Windows incluant Node, serveur MCP universel autonome, seconde identité Tailscale tsnet sur HTTPS 443, sans toucher aux ports existants de PC-SALON. Une autorisation Tailscale lors de la première installation. Pirate Warrior 2 est la première application."
           fi
