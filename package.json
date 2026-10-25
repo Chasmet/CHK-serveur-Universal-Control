@@ -10,7 +10,7 @@
     "start": "node src/server.mjs",
     "dev": "node --watch src/server.mjs",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check src/server.mjs && node --check src/mcp.mjs && node --check src/security.mjs && node --check src/core.mjs && node --check src/ai.mjs && node --check public/chat.js && node --check src/godot.mjs && node --check public/oauth-login.js"
+    "check": "node --check src/server.mjs && node --check src/mcp.mjs && node --check src/security.mjs && node --check src/core.mjs && node --check src/ai.mjs && node --check public/chat.js && node --check src/godot.mjs && node --check public/oauth-login.js && node --check src/crypto.mjs"
   },
   "license": "MIT"
 }
