@@ -297,8 +297,10 @@ namespace CHKUniversalControl
         static void InstallResources() {
             Directory.CreateDirectory(Runtime);
             string stableBridge = Path.Combine(Root, "runtime-v0.6.0", "tailscale-bridge.exe");
+            string oauthScript = Path.Combine(Runtime, "public", "oauth-login.js");
             bool oldBridgeAvailable = File.Exists(stableBridge);
-            if (!File.Exists(NodeFile) || (!File.Exists(BridgeFile) && !oldBridgeAvailable) || !File.Exists(ServerFile)) {
+            if (!File.Exists(NodeFile) || (!File.Exists(BridgeFile) && !oldBridgeAvailable) ||
+                !File.Exists(ServerFile) || !File.Exists(oauthScript)) {
                 using (var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream("chk.runtime")) {
                     if (resource == null) throw new Exception("Le package Windows ne contient pas les programmes nécessaires.");
                     using(var zip = new ZipArchive(resource, ZipArchiveMode.Read)) {
@@ -317,8 +319,9 @@ namespace CHKUniversalControl
                     }
                 }
             }
-            if (!File.Exists(NodeFile) || (!File.Exists(BridgeFile) && !oldBridgeAvailable) || !File.Exists(ServerFile))
-                throw new Exception("Installation incomplète : Node, tunnel stable v0.6 ou MCP introuvable.");
+            if (!File.Exists(NodeFile) || (!File.Exists(BridgeFile) && !oldBridgeAvailable) ||
+                !File.Exists(ServerFile) || !File.Exists(oauthScript))
+                throw new Exception("Installation incomplète : Node, tunnel stable v0.6 ou scripts OAuth/MCP introuvables.");
         }
 
         void StartAsync() {
@@ -579,6 +582,12 @@ namespace CHKUniversalControl
                 }
             }
             if(Version!="0.8.0")throw new Exception("Incorrect Windows launcher version");
+            // Regression for the user's screenshot: Process.HasExited throws when
+            // Process.Start was denied and no native process is associated.
+            using(var neverStarted = new Process()) {
+                if(IsProcessRunning(neverStarted))
+                    throw new Exception("Unstarted Process incorrectly reported as running");
+            }
         }
     }
 }
