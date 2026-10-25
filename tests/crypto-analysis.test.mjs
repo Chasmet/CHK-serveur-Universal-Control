@@ -78,3 +78,40 @@ test("read-only financial page browser rejects private/local hosts, redirects, a
     await assert.rejects(intel.openPublicPage({url}),/crypto_public_domain_not_allowed/);
   }
 });
+
+test("fixed-origin Spot market tools inspect ticker, orderbook, trades and trading rules",async()=>{
+  const calls=[];
+  const intel=createCryptoIntelligence({fetchImpl:async url=>{
+    calls.push(url);
+    let data;
+    if(url.includes("/tickers?")) data={list:[{symbol:"BTCUSDC",lastPrice:"67200",bid1Price:"67199",
+      ask1Price:"67201",price24hPcnt:"0.02",volume24h:"100",turnover24h:"6710000",
+      highPrice24h:"68000",lowPrice24h:"65000"}]};
+    else if(url.includes("/orderbook?")) data={b:[["67199","1"],["67198","2"]],
+      a:[["67201","1"],["67202","3"]],ts:1792900000000};
+    else if(url.includes("/recent-trade?")) data={list:[
+      {S:"Buy",p:"67200",v:"0.5",T:1792900000000},
+      {S:"Sell",p:"67199",v:"0.2",T:1792900000001}]};
+    else if(url.includes("/instruments-info?")) data={list:[{symbol:"BTCUSDC",status:"Trading",
+      baseCoin:"BTC",quoteCoin:"USDC",priceFilter:{tickSize:"0.1"},
+      lotSizeFilter:{minOrderAmt:"5",basePrecision:"0.00001"}}]};
+    else throw Error("Unexpected URL");
+    return {ok:true,json:async()=>({retCode:0,result:data})};
+  }});
+  const t=await intel.ticker({symbol:"BTCUSDC"});
+  assert.equal(t.lastPrice,67200);
+  assert.equal(t.readOnly,true);
+  const b=await intel.orderbook({symbol:"BTCUSDC",depth:50});
+  assert.ok(b.spreadPct>0);
+  assert.ok(b.bidLiquidityRatioPct>0 && b.bidLiquidityRatioPct<100);
+  assert.equal(b.bestBid,67199);
+  const trades=await intel.recentTrades({symbol:"BTCUSDC"});
+  assert.equal(trades.buyTradeCount,1);
+  assert.equal(trades.sellTradeCount,1);
+  const rule=await intel.instrumentRules({symbol:"BTCUSDC"});
+  assert.equal(rule.tickSize,"0.1");
+  assert.equal(rule.realOrdersBlockedInMCP,true);
+  assert.equal(calls.length,4);
+  assert.ok(calls.every(url=>url.startsWith("https://api.bybit.eu/")));
+  await assert.rejects(intel.orderbook({symbol:"BTCUSDC",depth:999}),/crypto_invalid_depth/);
+});
