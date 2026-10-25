@@ -58,5 +58,5 @@ test("Universal MCP exposes Godot tools and queues writes instead of claiming su
   assert.equal(payload.state, "pending_approval");
   assert.equal(payload.result, null);
   const apps = await rpc("tools/call", { name: "apps_list", arguments: {} });
-  assert.ok(JSON.parse(apps.content[0].text).some(app => app.id === "godot-local"));
+  assert.ok(JSON.parse(apps.content[0].text).apps.some(app => app.id === "godot-local"));
 });
