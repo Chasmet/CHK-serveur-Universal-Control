@@ -5,6 +5,7 @@ package main
 
 import (
     "context"
+    "encoding/json"
     "errors"
     "fmt"
     "log"
@@ -19,6 +20,8 @@ import (
     "time"
 
     "tailscale.com/atomicfile"
+    "tailscale.com/logpolicy"
+    "tailscale.com/logtail"
     "tailscale.com/tsnet"
 )
 
@@ -52,20 +55,76 @@ var loginURL = regexp.MustCompile(`https://login\.tailscale\.com/[a-zA-Z0-9/?=_-
 // probeStateDir uses the SAME atomic Windows file-writing primitive used by
 // Tailscale's logpolicy.Config.Save. A plain mkdir test did not catch the
 // failure on the user's PC. It never overwrites an existing Tailscale file.
+// createInitialFile creates an initial destination with ordinary Windows
+// CreateFile/O_EXCL semantics. Never overwrites a previous Tailscale identity.
+// On affected Windows installations the Tailscale atomic rename fails only
+// when ReplaceFileW is called on a destination that does not exist yet.
+func createInitialFile(path string, content []byte) error {
+    f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+    if errors.Is(err, os.ErrExist) {
+        info, statErr := os.Stat(path)
+        if statErr != nil { return statErr }
+        if !info.Mode().IsRegular() || info.Size() == 0 {
+            return fmt.Errorf("existing state file is not a nonempty regular file: %s", path)
+        }
+        return nil
+    }
+    if err != nil { return err }
+    if _, err = f.Write(content); err == nil { err = f.Sync() }
+    closeErr := f.Close()
+    if err == nil { err = closeErr }
+    // Preserve a failed or interrupted initial file for diagnosis; never
+    // silently replace a previous valid Tailscale configuration.
+    return err
+}
+
+// This is the exact Windows atomic rewrite operation Tailscale uses for
+// persistence. Test it with a destination that exists, not a missing file.
 func probeStateDir(dir string) error {
     if err := os.MkdirAll(dir, 0700); err != nil {
-        return fmt.Errorf("create folder: %w", err)
+        return fmt.Errorf("cannot create state folder: %w", err)
     }
     info, err := os.Stat(dir)
     if err != nil || !info.IsDir() {
-        return fmt.Errorf("not a writable directory: %s: %v", dir, err)
+        return fmt.Errorf("state path is not a directory: %s: %v", dir, err)
     }
-    probe := filepath.Join(dir, ".chk-atomic-write-probe")
-    if err := atomicfile.WriteFile(probe, []byte("CHK local storage ready"), 0600); err != nil {
-        return fmt.Errorf("Windows atomic write/rename failed: %w", err)
+    probe := filepath.Join(dir, fmt.Sprintf(".chk-atomic-probe-%d", os.Getpid()))
+    if err := createInitialFile(probe, []byte("initial file")); err != nil {
+        return fmt.Errorf("Windows CreateFile failed: %w", err)
     }
-    if err := os.Remove(probe); err != nil {
-        return fmt.Errorf("cleanup probe: %w", err)
+    defer os.Remove(probe)
+    if err := atomicfile.WriteFile(probe, []byte("atomic rewrite test"), 0600); err != nil {
+        return fmt.Errorf("Windows atomic replace failed even for an existing file: %w", err)
+    }
+    return nil
+}
+
+// tsnet initializes two files using atomicfile.WriteFile. On some Windows
+// configurations a first-time atomic rename to a nonexistent destination
+// fails with ERROR_PATH_NOT_FOUND. Seed valid initial files using O_EXCL,
+// allowing Tailscale to safely replace them atomically thereafter.
+func prepareTsnetStorage(dir string) error {
+    config := filepath.Join(dir, "tailscaled.log.conf")
+    initialConfig := logpolicy.NewConfig(logtail.CollectionNode).ToBytes()
+    if err := createInitialFile(config, initialConfig); err != nil {
+        return fmt.Errorf("logging configuration not writable: %w", err)
+    }
+    encoded, err := os.ReadFile(config)
+    if err != nil { return err }
+    parsed, err := logpolicy.ConfigFromBytes(encoded)
+    if err != nil { return fmt.Errorf("existing Tailscale log config invalid; kept unchanged: %w", err) }
+    if err := parsed.Validate(logtail.CollectionNode); err != nil {
+        return fmt.Errorf("existing Tailscale log config invalid; kept unchanged: %w", err)
+    }
+
+    stateFile := filepath.Join(dir, "tailscaled.state")
+    if err := createInitialFile(stateFile, []byte("{}")); err != nil {
+        return fmt.Errorf("Tailscale node identity storage not writable: %w", err)
+    }
+    stateBytes, err := os.ReadFile(stateFile)
+    if err != nil { return err }
+    if !json.Valid(stateBytes) {
+        return fmt.Errorf("existing Tailscale identity state invalid; not overwritten: %s", stateFile)
     }
     return nil
 }
@@ -117,7 +176,7 @@ func chooseStateDir(base string) (string, error) {
             fmt.Println("FILE_PROBE_FAILED=" + filepath.Base(dir) + ": " + err.Error())
             continue
         }
-        if err := atomicfile.WriteFile(marker, []byte(dir+"\n"), 0600); err != nil {
+        if err := createInitialFile(marker, []byte(dir+"\n")); err != nil {
             return "", fmt.Errorf("cannot persist Tailscale state selection: %w", err)
         }
         fmt.Println("FILE_PROBE_OK=" + dir)
@@ -136,6 +195,9 @@ func main() {
     }
     stateDir, err := chooseStateDir(base)
     if err != nil {
+        log.Fatal("TAILSCALE_STORAGE_FAILED: ", err)
+    }
+    if err := prepareTsnetStorage(stateDir); err != nil {
         log.Fatal("TAILSCALE_STORAGE_FAILED: ", err)
     }
     if len(os.Args) > 1 && os.Args[1] == "--diagnostic-storage" {
