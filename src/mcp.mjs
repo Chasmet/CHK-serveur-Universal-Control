@@ -37,7 +37,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask) 
         const a = rpc.params?.arguments || {};
         let output;
         if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: store.listApps(Boolean(config.legacyUrl)).length, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl) };
-        else if (name === "apps_list") output = store.listApps(Boolean(config.legacyUrl));
+        else if (name === "apps_list") output = { apps: store.listApps(Boolean(config.legacyUrl)) };
         else if (name === "app_register") output = await store.registerApp(a);
         else if (name === "app_invite") output = await store.createInvite();
         else if (name === "task_submit") output = await store.submit({ ...a, source: "mcp", legacy: Boolean(config.legacyUrl) });
