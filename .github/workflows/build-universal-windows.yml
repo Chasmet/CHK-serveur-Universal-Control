@@ -1,9 +1,9 @@
-name: CHK SERVEUR PC - Windows HTTPS 443
+name: CHK SERVEUR PC UNIVERSEL - Windows HTTPS 443
 on:
   workflow_dispatch:
   push:
     branches:
-      - fix/chk-serveur-pc-v050-storage-20261025
+      - fix/chk-serveur-pc-v060-auth-ui-20261025
     paths:
       - 'src/**'
       - 'public/**'
@@ -82,7 +82,7 @@ jobs:
           $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework/v4.0.30319/csc.exe'
           if (!(Test-Path $csc)) { throw 'Windows native compiler missing' }
           New-Item -ItemType Directory -Force 'dist' | Out-Null
-          $exe=(Join-Path (Get-Location).Path 'dist/CHK-SERVEUR-PC-UNIVERSEL-v0.5.0.exe')
+          $exe=(Join-Path (Get-Location).Path 'dist/CHK-SERVEUR-PC-UNIVERSEL-v0.6.0.exe')
           $archive=(Join-Path (Get-Location).Path 'windows/runtime.zip')
           $source=(Resolve-Path 'windows/UniversalStarter.cs').Path
           if (!(Test-Path $source)) { throw 'Windows C# launcher file missing' }
@@ -95,12 +95,12 @@ jobs:
           Write-Output 'Windows EXE validated: Node, independent Tailscale bridge, MCP files'
       - uses: actions/upload-artifact@v4
         with:
-          name: CHK-SERVEUR-PC-UNIVERSEL-Windows-v0.5.0
-          path: dist/CHK-SERVEUR-PC-UNIVERSEL-v0.5.0.exe
+          name: CHK-SERVEUR-PC-UNIVERSEL-Windows-v0.6.0
+          path: dist/CHK-SERVEUR-PC-UNIVERSEL-v0.6.0.exe
           if-no-files-found: error
           retention-days: 30
   release:
-    if: github.ref == 'refs/heads/fix/chk-serveur-pc-v050-storage-20261025'
+    if: github.ref == 'refs/heads/fix/chk-serveur-pc-v060-auth-ui-20261025'
     needs: build-windows
     runs-on: ubuntu-latest
     permissions:
@@ -108,7 +108,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: CHK-SERVEUR-PC-UNIVERSEL-Windows-v0.5.0
+          name: CHK-SERVEUR-PC-UNIVERSEL-Windows-v0.6.0
           path: release
       - name: Publier le vrai programme Windows natif
         env:
@@ -116,10 +116,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          test -s release/CHK-SERVEUR-PC-UNIVERSEL-v0.5.0.exe
-          TAG="chk-serveur-pc-v0.5.0"
+          test -s release/CHK-SERVEUR-PC-UNIVERSEL-v0.6.0.exe
+          TAG="chk-serveur-pc-v0.6.0"
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v0.5.0.exe --clobber
+            gh release upload "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v0.6.0.exe --clobber
           else
-            gh release create "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v0.5.0.exe --title "CHK SERVEUR PC UNIVERSEL 0.5.0" --notes "Vrai EXE Windows incluant Node, serveur MCP universel autonome, seconde identité Tailscale tsnet sur HTTPS 443, sans toucher aux ports existants de PC-SALON. Une autorisation Tailscale lors de la première installation. Pirate Warrior 2 est la première application."
+            gh release create "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v0.6.0.exe --title "CHK SERVEUR PC UNIVERSEL 0.6.0" --notes "Vrai EXE Windows incluant Node, serveur MCP universel autonome, seconde identité Tailscale tsnet sur HTTPS 443, sans toucher aux ports existants de PC-SALON. Une autorisation Tailscale lors de la première installation. Pirate Warrior 2 est la première application."
           fi
