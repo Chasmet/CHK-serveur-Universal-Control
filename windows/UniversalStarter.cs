@@ -277,21 +277,37 @@ namespace CHKUniversalControl
             return cfg;
         }
         void PersistPublicUrl(string url) {
-            var cfg = Config();
-            if (Convert.ToString(cfg.ContainsKey("public_url") ? cfg["public_url"] : "") == url) return;
-            cfg["public_url"] = url;
-            var temp = SettingsFile + ".new";
-            File.WriteAllText(temp, serializer.Serialize(cfg), new UTF8Encoding(false));
-            File.Replace(temp, SettingsFile, SettingsFile + ".backup");
+            try {
+                var cfg = Config();
+                if (Convert.ToString(cfg.ContainsKey("public_url") ? cfg["public_url"] : "") == url) return;
+                cfg["public_url"] = url;
+                var temp = SettingsFile + ".new";
+                File.WriteAllText(temp, serializer.Serialize(cfg), new UTF8Encoding(false));
+                File.Replace(temp, SettingsFile, SettingsFile + ".backup");
+            } catch (UnauthorizedAccessException e) {
+                // Do not interrupt a working Funnel because Windows denied the
+                // optional URL cache write; the same address exists in memory.
+                Log("OPTIONAL_PUBLIC_URL_PERSIST_DENIED " + e.ToString());
+                UpdateStatus("HTTPS actif ; sauvegarde du lien bloquée par Windows. Configuration existante préservée.");
+            } catch (IOException e) {
+                Log("OPTIONAL_PUBLIC_URL_PERSIST_IO " + e.ToString());
+                UpdateStatus("HTTPS actif ; écriture du lien impossible. Configuration existante conservée.");
+            }
         }
         static void InstallResources() {
             Directory.CreateDirectory(Runtime);
-            if (!File.Exists(NodeFile) || !File.Exists(BridgeFile) || !File.Exists(ServerFile)) {
+            string stableBridge = Path.Combine(Root, "runtime-v0.6.0", "tailscale-bridge.exe");
+            bool oldBridgeAvailable = File.Exists(stableBridge);
+            if (!File.Exists(NodeFile) || (!File.Exists(BridgeFile) && !oldBridgeAvailable) || !File.Exists(ServerFile)) {
                 using (var resource = Assembly.GetExecutingAssembly().GetManifestResourceStream("chk.runtime")) {
                     if (resource == null) throw new Exception("Le package Windows ne contient pas les programmes nécessaires.");
                     using(var zip = new ZipArchive(resource, ZipArchiveMode.Read)) {
                         foreach (var entry in zip.Entries) {
                             if (String.IsNullOrEmpty(entry.Name)) continue;
+                            // Windows may deny a NEW Tailscale executable while
+                            // the user's 0.6.0 binary already runs correctly.
+                            // Never replace that known-good binary during upgrade.
+                            if (oldBridgeAvailable && entry.Name.Equals("tailscale-bridge.exe", StringComparison.OrdinalIgnoreCase)) continue;
                             var path = Path.GetFullPath(Path.Combine(Runtime, entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
                             if (!path.StartsWith(Path.GetFullPath(Runtime) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
                                 throw new Exception("Archive invalide : chemin interdit.");
@@ -301,8 +317,8 @@ namespace CHKUniversalControl
                     }
                 }
             }
-            if (!File.Exists(NodeFile) || !File.Exists(BridgeFile) || !File.Exists(ServerFile))
-                throw new Exception("Installation incomplète : Node, Funnel ou MCP introuvable.");
+            if (!File.Exists(NodeFile) || (!File.Exists(BridgeFile) && !oldBridgeAvailable) || !File.Exists(ServerFile))
+                throw new Exception("Installation incomplète : Node, tunnel stable v0.6 ou MCP introuvable.");
         }
 
         void StartAsync() {
@@ -340,10 +356,18 @@ namespace CHKUniversalControl
 
         void StartNode(bool restart) {
             if (restart) {
-                if (node != null && !node.HasExited) {
+                // Do not try starting a second Node process if an older launcher
+                // already owns port 8787. It would fail to bind the same port.
+                if (node == null && LocalHealthy()) {
+                    UpdateStatus("Serveur Node déjà actif dans une autre instance. Ferme l'ancien lanceur pour appliquer le code OAuth.");
+                    return;
+                }
+                if (IsProcessRunning(node)) {
                     try { node.Kill(); node.WaitForExit(3000); } catch { }
                 }
             } else if (LocalHealthy()) {
+                var saved = Config();
+                nodeBaseUrl = Convert.ToString(saved.ContainsKey("public_url") ? saved["public_url"] : "http://localhost:8787");
                 UpdateStatus("Serveur local 8787 déjà accessible. Je conserve ses données et son processus.");
                 return;
             }
