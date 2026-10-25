@@ -48,7 +48,7 @@ namespace CHKUniversalControl
 
     sealed class MainPanel : Form
     {
-        const string Version = "0.4.0";
+        const string Version = "0.5.0";
         static readonly string Root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CHKUniversalControl");
         static readonly string Runtime = Path.Combine(Root, "runtime-v" + Version);
@@ -79,7 +79,7 @@ namespace CHKUniversalControl
 
         public MainPanel()
         {
-            Text = "CHK SERVEUR PC - v" + Version + " - MCP universel";
+            Text = "CHK SERVEUR PC UNIVERSEL - Version " + Version;
             Icon = SystemIcons.Application;
             BackColor = Color.FromArgb(13, 23, 40);
             ForeColor = Color.White;
@@ -88,7 +88,7 @@ namespace CHKUniversalControl
             MinimumSize = new Size(600, 640);
             StartPosition = FormStartPosition.CenterScreen;
 
-            var heading = new Label { Text = "CHK SERVEUR PC", Left = 22, Top = 20,
+            var heading = new Label { Text = "CHK SERVEUR PC UNIVERSEL", Left = 22, Top = 20,
                 Width = 630, Height = 38, Font = new Font("Segoe UI", 20F, FontStyle.Bold),
                 ForeColor = Color.FromArgb(100, 210, 250) };
             Controls.Add(heading);
@@ -150,7 +150,7 @@ namespace CHKUniversalControl
             Controls.Add(diagnostics);
 
             tray.Icon = SystemIcons.Application;
-            tray.Text = "CHK SERVEUR PC";
+            tray.Text = "CHK SERVEUR PC - MCP universel";
             tray.Visible = true;
             var menu = new ContextMenuStrip();
             menu.Items.Add("Ouvrir le tableau de bord", null, delegate { OpenBrowser(ChatURL); });
@@ -364,6 +364,9 @@ namespace CHKUniversalControl
         }
         void ProcessBridgeLog(string text) {
             Log("TSNET " + text);
+            if (text.StartsWith("STORAGE_READY=")) {
+                UpdateStatus("Dossiers Tailscale Windows préparés, clés existantes conservées.");
+            }
             if (text.StartsWith("FILE_PROBE_OK=")) {
                 UpdateStatus("Dossier Tailscale vérifié : écriture Windows testée.");
             }
@@ -407,7 +410,7 @@ namespace CHKUniversalControl
             });
         }
         void SaveStartup() {
-            var target = Path.Combine(Root, "CHK-SERVEUR-PC-v" + Version + ".exe");
+            var target = Path.Combine(Root, "CHK-SERVEUR-PC-UNIVERSEL-v" + Version + ".exe");
             if (!File.Exists(target)) File.Copy(Assembly.GetExecutingAssembly().Location, target);
             using(var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
                 key.SetValue("CHKUniversalControl", "\"" + target + "\"", RegistryValueKind.String);
@@ -447,7 +450,7 @@ namespace CHKUniversalControl
                         throw new Exception("Missing required files in packaged Windows executable");
                 }
             }
-            if(Version!="0.4.0")throw new Exception("Incorrect Windows launcher version");
+            if(Version!="0.5.0")throw new Exception("Incorrect Windows launcher version");
         }
     }
 }
