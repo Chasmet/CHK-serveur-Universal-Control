@@ -125,9 +125,10 @@ test("OAuth login on Android is interactive and returns JSON redirect or a clear
   assert.match(csp, /script-src 'self'/);
   // Regression for Android Chrome: default-src 'none' blocks fetch()
   // unless connect-src explicitly allows sending OAuth POST to the same PC.
-  assert.match(csp, /(?:^|;)\\s*connect-src 'self'(?:;|$)/);
-  assert.match(csp, /(?:^|;)\\s*form-action 'self'(?:;|$)/);
-  assert.doesNotMatch(csp, /connect-src \\*/);
+  const directives = csp.split(";").map(part => part.trim());
+  assert.ok(directives.includes("connect-src 'self'"), "Browser fetch to PC must be permitted");
+  assert.ok(directives.includes("form-action 'self'"), "Form POST stays on user's own PC");
+  assert.ok(!directives.includes("connect-src *"), "Do not allow external network destinations");
   const script = await request("/oauth-login.js");
   assert.equal(script.status, 200);
   assert.match(await script.text(), /Vérification du mot de passe/);
