@@ -52,6 +52,37 @@ func privateProxy(upstream string) (http.Handler, error) {
 
 var loginURL = regexp.MustCompile(`https://login\.tailscale\.com/[a-zA-Z0-9/?=_-]+`)
 
+// reportLoginURL polls the local Tailscale API for its actual authorization
+// address. Relying only on UserLogf misses messages on some Windows installs.
+// The event is sent to the Windows app over redirected stdout, without
+// requiring the user to install or invoke a shell.
+func reportLoginURL(ctx context.Context, s *tsnet.Server) {
+    client, err := s.LocalClient()
+    if err != nil {
+        fmt.Println("AUTH_STATUS_ERROR=Unable to read Tailscale local API: " + err.Error())
+        return
+    }
+    ticker := time.NewTicker(2 * time.Second)
+    defer ticker.Stop()
+    previous := ""
+    for {
+        current, err := client.Status(ctx)
+        if err == nil && current != nil && current.AuthURL != "" {
+            url := strings.TrimSpace(current.AuthURL)
+            if loginURL.MatchString(url) && url != previous {
+                previous = url
+                fmt.Println("AUTH_URL=" + url)
+            }
+        }
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+        }
+    }
+}
+
+
 // probeStateDir uses the SAME atomic Windows file-writing primitive used by
 // Tailscale's logpolicy.Config.Save. A plain mkdir test did not catch the
 // failure on the user's PC. It never overwrites an existing Tailscale file.
@@ -230,10 +261,14 @@ func main() {
     if err := s.Start(); err != nil {
         log.Fatal("TAILSCALE_START_FAILED: ", err)
     }
-    status, err := s.Up(context.Background())
+    authCtx, authCancel := context.WithCancel(context.Background())
+    defer authCancel()
+    go reportLoginURL(authCtx, s)
+    status, err := s.Up(authCtx)
     if err != nil {
         log.Fatal("TAILSCALE_LOGIN_FAILED: ", err)
     }
+    authCancel()
     if status == nil || status.Self == nil || status.Self.DNSName == "" {
         log.Fatal("TAILSCALE_DNS_NOT_READY")
     }
