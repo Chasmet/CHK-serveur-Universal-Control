@@ -83,8 +83,8 @@ namespace CHKUniversalControl
             BackColor = Color.FromArgb(13, 23, 40);
             ForeColor = Color.White;
             Font = new Font("Segoe UI", 10F);
-            ClientSize = new Size(670, 610);
-            MinimumSize = new Size(600, 580);
+            ClientSize = new Size(670, 680);
+            MinimumSize = new Size(600, 640);
             StartPosition = FormStartPosition.CenterScreen;
 
             var heading = new Label { Text = "CHK UNIVERSAL CONTROL", Left = 22, Top = 20,
@@ -127,8 +127,21 @@ namespace CHKUniversalControl
                 } catch (Exception e) { ShowError(e); }
             });
 
-            diagnostics.Left = 22; diagnostics.Top = 488; diagnostics.Width = 625;
-            diagnostics.Height = 100; diagnostics.Multiline = true;
+            MakeButton("VOIR LES ERREURS ET LE DIAGNOSTIC", 485, delegate {
+                try {
+                    if (!File.Exists(LogFile)) {
+                        diagnostics.Text = "Aucune erreur enregistrée.";
+                        return;
+                    }
+                    string text = File.ReadAllText(LogFile, Encoding.UTF8);
+                    if (text.Length > 15000) text = text.Substring(text.Length - 15000);
+                    diagnostics.Text = Regex.Replace(text, @"\b[a-f0-9]{64}\b", "[CLE MASQUEE]", RegexOptions.IgnoreCase);
+                    diagnostics.SelectionStart = diagnostics.TextLength;
+                    diagnostics.ScrollToCaret();
+                } catch (Exception e) { ShowError(e); }
+            });
+            diagnostics.Left = 22; diagnostics.Top = 540; diagnostics.Width = 625;
+            diagnostics.Height = 115; diagnostics.Multiline = true;
             diagnostics.ReadOnly = true; diagnostics.ScrollBars = ScrollBars.Vertical;
             diagnostics.BackColor = Color.FromArgb(18, 35, 54);
             diagnostics.ForeColor = Color.LightGray;
