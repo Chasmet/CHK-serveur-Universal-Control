@@ -106,7 +106,7 @@ export function createCryptoModule(store,{base=ENDPOINT,fetchImpl=globalThis.fet
   function result(args){
     const app=agent();
     const job=store.getJob(args?.task_id);
-    if(!app||!job||job.app_id!==app.id||!["crypto_portfolio","crypto_tracking","crypto_chart_state","crypto_device_status","crypto_chart_control"].includes(job.action))return {error:"crypto_task_not_found"};
+    if(!app||!job||job.app_id!==app.id||!["crypto_portfolio","crypto_tracking","crypto_chart_state","crypto_device_status","crypto_chart_control","crypto_alerts","crypto_bot_status","crypto_app_status"].includes(job.action))return {error:"crypto_task_not_found"};
     return {task_id:job.id,state:job.state,result:job.state==="completed"?job.result:null,
       completed:job.state==="completed",hint:job.state==="queued"?"Ouvrir ou connecter CHK Crypto Android.":null};
   }
