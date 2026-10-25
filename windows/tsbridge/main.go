@@ -18,6 +18,7 @@ import (
     "strings"
     "time"
 
+    "tailscale.com/atomicfile"
     "tailscale.com/tsnet"
 )
 
@@ -48,6 +49,83 @@ func privateProxy(upstream string) (http.Handler, error) {
 
 var loginURL = regexp.MustCompile(`https://login\.tailscale\.com/[a-zA-Z0-9/?=_-]+`)
 
+// probeStateDir uses the SAME atomic Windows file-writing primitive used by
+// Tailscale's logpolicy.Config.Save. A plain mkdir test did not catch the
+// failure on the user's PC. It never overwrites an existing Tailscale file.
+func probeStateDir(dir string) error {
+    if err := os.MkdirAll(dir, 0700); err != nil {
+        return fmt.Errorf("create folder: %w", err)
+    }
+    info, err := os.Stat(dir)
+    if err != nil || !info.IsDir() {
+        return fmt.Errorf("not a writable directory: %s: %v", dir, err)
+    }
+    probe := filepath.Join(dir, ".chk-atomic-write-probe")
+    if err := atomicfile.WriteFile(probe, []byte("CHK local storage ready"), 0600); err != nil {
+        return fmt.Errorf("Windows atomic write/rename failed: %w", err)
+    }
+    if err := os.Remove(probe); err != nil {
+        return fmt.Errorf("cleanup probe: %w", err)
+    }
+    return nil
+}
+
+func stateExists(dir string) bool {
+    for _, name := range []string{"tailscaled.state", "tailscaled.log.conf"} {
+        if _, err := os.Stat(filepath.Join(dir, name)); err == nil { return true }
+    }
+    return false
+}
+
+// chooseStateDir preserves a prior authenticated node if present. New
+// installations use their own stable LocalAppData folder, separate from
+// CHKUniversalControl\tsnet, the path which failed for this installation.
+// The chosen path is pinned across upgrades; it cannot change silently.
+func chooseStateDir(base string) (string, error) {
+    if err := os.MkdirAll(base, 0700); err != nil { return "", err }
+    marker := filepath.Join(base, "tailscale-state-directory.txt")
+    oldDir := filepath.Join(base, "tsnet")
+    localApp := os.Getenv("LOCALAPPDATA")
+    if localApp == "" {
+        var err error
+        localApp, err = os.UserConfigDir()
+        if err != nil { return "", err }
+    }
+    dedicated := filepath.Join(localApp, "CHK-Serveur-PC-Reseau")
+    if text, err := os.ReadFile(marker); err == nil {
+        selected := filepath.Clean(strings.TrimSpace(string(text)))
+        // Refuse untrusted state-folder substitutions from a modified marker.
+        if !strings.EqualFold(selected, filepath.Clean(oldDir)) &&
+            !strings.EqualFold(selected, filepath.Clean(dedicated)) {
+            return "", errors.New("invalid persisted Tailscale state directory")
+        }
+        if err := probeStateDir(selected); err != nil {
+            return "", fmt.Errorf("existing Tailscale identity cannot be written; state preserved: %w", err)
+        }
+        return selected, nil
+    } else if !errors.Is(err, os.ErrNotExist) {
+        return "", err
+    }
+    candidates := []string{dedicated, oldDir}
+    if stateExists(oldDir) {
+        candidates = []string{oldDir} // do not silently create a different identity
+    }
+    var reasons []string
+    for _, dir := range candidates {
+        if err := probeStateDir(dir); err != nil {
+            reasons = append(reasons, filepath.Base(dir)+": "+err.Error())
+            fmt.Println("FILE_PROBE_FAILED=" + filepath.Base(dir) + ": " + err.Error())
+            continue
+        }
+        if err := atomicfile.WriteFile(marker, []byte(dir+"\n"), 0600); err != nil {
+            return "", fmt.Errorf("cannot persist Tailscale state selection: %w", err)
+        }
+        fmt.Println("FILE_PROBE_OK=" + dir)
+        return dir, nil
+    }
+    return "", errors.New("no writable Tailscale folder; " + strings.Join(reasons, "; "))
+}
+
 func main() {
     base := os.Getenv("CHK_UNIVERSAL_HOME")
     if base == "" {
@@ -56,9 +134,13 @@ func main() {
     if base == "" {
         log.Fatal("CHK_UNIVERSAL_HOME missing")
     }
-    stateDir := filepath.Join(base, "tsnet")
-    if err := os.MkdirAll(stateDir, 0700); err != nil {
-        log.Fatal(err)
+    stateDir, err := chooseStateDir(base)
+    if err != nil {
+        log.Fatal("TAILSCALE_STORAGE_FAILED: ", err)
+    }
+    if len(os.Args) > 1 && os.Args[1] == "--diagnostic-storage" {
+        fmt.Println("STORAGE_TEST_OK")
+        return
     }
     handler, err := privateProxy("http://127.0.0.1:8787")
     if err != nil {
