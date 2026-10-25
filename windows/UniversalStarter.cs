@@ -48,7 +48,7 @@ namespace CHKUniversalControl
 
     sealed class MainPanel : Form
     {
-        const string Version = "0.5.0";
+        const string Version = "0.6.0";
         static readonly string Root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CHKUniversalControl");
         static readonly string Runtime = Path.Combine(Root, "runtime-v" + Version);
@@ -65,6 +65,7 @@ namespace CHKUniversalControl
         readonly Label domain = new Label();
         readonly TextBox diagnostics = new TextBox();
         readonly Button authorize = new Button();
+        readonly TextBox authLinkField = new TextBox();
         readonly Button copy = new Button();
         readonly NotifyIcon tray = new NotifyIcon();
         readonly System.Windows.Forms.Timer tick = new System.Windows.Forms.Timer();
@@ -84,8 +85,8 @@ namespace CHKUniversalControl
             BackColor = Color.FromArgb(13, 23, 40);
             ForeColor = Color.White;
             Font = new Font("Segoe UI", 10F);
-            ClientSize = new Size(670, 680);
-            MinimumSize = new Size(600, 640);
+            ClientSize = new Size(670, 750);
+            MinimumSize = new Size(600, 705);
             StartPosition = FormStartPosition.CenterScreen;
 
             var heading = new Label { Text = "CHK SERVEUR PC UNIVERSEL", Left = 22, Top = 20,
@@ -105,22 +106,49 @@ namespace CHKUniversalControl
             Controls.Add(domain);
 
             MakeButton("INSTALLER / DÉMARRER LE SERVEUR", 229, delegate { StartAsync(); });
-            authorize.Text = "AUTORISER LE SERVEUR DANS TAILSCALE";
+            authorize.Text = "OUVRIR L'AUTORISATION TAILSCALE";
             SetupButton(authorize, 280, delegate {
                 string url; lock (sync) { url = authUrl; }
-                if (!String.IsNullOrEmpty(url)) OpenBrowser(url);
+                if (!String.IsNullOrEmpty(url)) {
+                    try { Clipboard.SetText(url); } catch { }
+                    OpenBrowser(url);
+                    UpdateStatus("Lien Tailscale ouvert dans Chrome et copié pour un collage manuel.");
+                } else {
+                    MessageBox.Show(this,
+                        "Le serveur cherche encore son lien d'autorisation Tailscale. " +
+                        "La zone juste en dessous affichera le lien dès qu'il sera disponible. " +
+                        "Si le tunnel s'arrête, clique sur VOIR LES ERREURS ET LE DIAGNOSTIC.",
+                        "CHK SERVEUR PC UNIVERSEL", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
             });
-            authorize.Enabled = false;
+            // No permanently disabled primary action: tell the user explicitly
+            // when Tailscale is still preparing its real authorization URL.
+            authorize.Enabled = true;
+            authLinkField.Left = 25; authLinkField.Top = 328;
+            authLinkField.Width = 620; authLinkField.Height = 30;
+            authLinkField.ReadOnly = true;
+            authLinkField.ShortcutsEnabled = true;
+            authLinkField.BackColor = Color.FromArgb(18, 35, 54);
+            authLinkField.ForeColor = Color.White;
+            authLinkField.Text = "Lien Tailscale : en cours de génération...";
+            authLinkField.Click += delegate {
+                string url; lock(sync) { url = authUrl; }
+                if (!String.IsNullOrEmpty(url)) {
+                    authLinkField.SelectAll();
+                    try { Clipboard.SetText(url); } catch { }
+                }
+            };
+            Controls.Add(authLinkField);
 
-            MakeButton("OUVRIR MON TABLEAU DE BORD LOCAL", 330, delegate { OpenBrowser(ChatURL); });
+            MakeButton("OUVRIR MON TABLEAU DE BORD LOCAL", 373, delegate { OpenBrowser(ChatURL); });
             copy.Text = "COPIER MON LIEN MCP CHATGPT";
-            SetupButton(copy, 381, delegate {
+            SetupButton(copy, 424, delegate {
                 string url; lock (sync) { url = publicUrl; }
                 if (String.IsNullOrEmpty(url)) MessageBox.Show("Valide d'abord le nouveau serveur dans Tailscale.", "CHK Universal");
                 else Clipboard.SetText(url + "/mcp");
             });
             copy.Enabled = false;
-            MakeButton("COPIER MON MOT DE PASSE ADMINISTRATEUR", 431, delegate {
+            MakeButton("COPIER MON MOT DE PASSE ADMINISTRATEUR", 475, delegate {
                 try {
                     var cfg = Config();
                     Clipboard.SetText(Convert.ToString(cfg["admin_password"]));
@@ -128,7 +156,7 @@ namespace CHKUniversalControl
                 } catch (Exception e) { ShowError(e); }
             });
 
-            MakeButton("VOIR LES ERREURS ET LE DIAGNOSTIC", 485, delegate {
+            MakeButton("VOIR LES ERREURS ET LE DIAGNOSTIC", 528, delegate {
                 try {
                     if (!File.Exists(LogFile)) {
                         diagnostics.Text = "Aucune erreur enregistrée.";
@@ -141,8 +169,8 @@ namespace CHKUniversalControl
                     diagnostics.ScrollToCaret();
                 } catch (Exception e) { ShowError(e); }
             });
-            diagnostics.Left = 22; diagnostics.Top = 540; diagnostics.Width = 625;
-            diagnostics.Height = 115; diagnostics.Multiline = true;
+            diagnostics.Left = 22; diagnostics.Top = 582; diagnostics.Width = 625;
+            diagnostics.Height = 144; diagnostics.Multiline = true;
             diagnostics.ReadOnly = true; diagnostics.ScrollBars = ScrollBars.Vertical;
             diagnostics.BackColor = Color.FromArgb(18, 35, 54);
             diagnostics.ForeColor = Color.LightGray;
@@ -164,8 +192,10 @@ namespace CHKUniversalControl
             tray.DoubleClick += delegate { ShowWindow(); };
             FormClosing += delegate(object sender, FormClosingEventArgs e) {
                 if (!exiting && e.CloseReason == CloseReason.UserClosing) {
-                    e.Cancel = true; Hide(); ShowInTaskbar = false;
-                    tray.ShowBalloonTip(1000, "CHK Universal", "Le serveur reste actif dans la barre Windows.", ToolTipIcon.Info);
+                    // Never make the window unexpectedly disappear during login.
+                    e.Cancel = true;
+                    ShowWindow();
+                    UpdateStatus("La fenêtre reste ouverte. Pour quitter : icône près de l'horloge Windows > Quitter.");
                 } else {
                     tick.Stop(); tray.Visible = false;
                     StopChildren();
@@ -175,7 +205,8 @@ namespace CHKUniversalControl
             tick.Interval = 5000;
             tick.Tick += delegate {
                 lock(sync) {
-                    authorize.Enabled = !String.IsNullOrEmpty(authUrl);
+                    // Leave authorization usable, including while the URL is loading.
+                    authorize.Enabled = true;
                     copy.Enabled = !String.IsNullOrEmpty(publicUrl);
                 }
             };
@@ -388,9 +419,22 @@ namespace CHKUniversalControl
             }
             var auth = Regex.Match(text, @"https://login\.tailscale\.com/[A-Za-z0-9/_?=.-]+");
             if (auth.Success) {
-                lock(sync) { authUrl = auth.Value; }
-                UpdateStatus("Autorisation Tailscale nécessaire : clique sur AUTORISER LE SERVEUR.");
-                if (!IsDisposed && IsHandleCreated) BeginInvoke((Action)delegate { authorize.Enabled = true; ShowWindow(); });
+                string foundURL = auth.Value;
+                bool newlyAvailable;
+                lock(sync) {
+                    newlyAvailable = authUrl != foundURL;
+                    authUrl = foundURL;
+                }
+                if (newlyAvailable) {
+                    UpdateStatus("Lien d'autorisation Tailscale reçu. Clique sur OUVRIR L'AUTORISATION.");
+                    if (!IsDisposed && IsHandleCreated) BeginInvoke((Action)delegate {
+                        authorize.Enabled = true;
+                        authorize.Text = "CLIQUE ICI POUR AUTORISER TAILSCALE";
+                        authLinkField.Text = foundURL;
+                        domain.Text = "Autorisation prête. Clique sur le bouton bleu ou copie le lien ci-dessous.";
+                        ShowWindow();
+                    });
+                }
             }
             if (!text.StartsWith("PUBLIC_HTTPS=https://")) return;
             var value = text.Substring("PUBLIC_HTTPS=".Length).Trim();
@@ -404,6 +448,8 @@ namespace CHKUniversalControl
                     if (!IsDisposed && IsHandleCreated) BeginInvoke((Action)delegate {
                         domain.Text = "Adresse universelle : " + value + "/mcp";
                         copy.Enabled = true;
+                        authorize.Text = "TAILSCALE AUTORISÉ";
+                        authLinkField.Text = "Identité Tailscale authentifiée — lien privé non nécessaire.";
                         authorize.Enabled = false;
                     });
                 } catch(Exception e) { ShowError(e); }
@@ -450,7 +496,7 @@ namespace CHKUniversalControl
                         throw new Exception("Missing required files in packaged Windows executable");
                 }
             }
-            if(Version!="0.5.0")throw new Exception("Incorrect Windows launcher version");
+            if(Version!="0.6.0")throw new Exception("Incorrect Windows launcher version");
         }
     }
 }
