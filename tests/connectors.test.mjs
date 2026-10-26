@@ -1,0 +1,129 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomBytes, createHash } from 'node:crypto';
+import { buildServer } from '../src/server.mjs';
+import { Store, hash } from '../src/core.mjs';
+import { createSecurity } from '../src/security.mjs';
+
+async function setup(t){
+ const dir=await mkdtemp(join(tmpdir(),'chk-connectors-'));
+ const config={host:'127.0.0.1',port:0,base:'http://localhost:8787',adminPassword:'connector-test-password',jwtSecret:'c'.repeat(64),file:join(dir,'state.json'),ollamaUrl:'',legacyUrl:''};
+ const {server,store}=await buildServer(config);
+ await new Promise(r=>server.listen(0,'127.0.0.1',r));
+ t.after(async()=>{await new Promise(r=>server.close(r));await rm(dir,{recursive:true,force:true});});
+ const base='http://127.0.0.1:'+server.address().port;
+ const req=async(path,{token,body,method=body?'POST':'GET',redirect='follow'}={})=>{
+  const response=await fetch(base+path,{method,redirect,headers:{'content-type':'application/json',...(token?{authorization:'Bearer '+token}:{})},body:body?JSON.stringify(body):undefined});
+  return response;
+ };
+ const owner=(await (await req('/api/login',{body:{password:config.adminPassword}})).json()).access_token;
+ const rpc=async(token,name,args={},method='tools/call')=>{
+  const response=await req('/mcp',{token,body:{jsonrpc:'2.0',id:1,method,params:method==='tools/call'?{name,arguments:args}:{}}});
+  return {status:response.status,body:await response.json()};
+ };
+ return {dir,config,store,req,owner,rpc};
+}
+async function oauth(ctx,name){
+ const redirect='https://chatgpt.com/connector_platform_oauth_redirect';
+ const client=await (await ctx.req('/oauth/register',{body:{client_name:name,redirect_uris:[redirect]}})).json();
+ const verifier=randomBytes(40).toString('base64url');
+ const challenge=createHash('sha256').update(verifier).digest('base64url');
+ const query=new URLSearchParams({response_type:'code',client_id:client.client_id,redirect_uri:redirect,code_challenge_method:'S256',code_challenge:challenge,resource:ctx.config.base+'/mcp'});
+ const approved=await ctx.req('/oauth/authorize?'+query,{body:{password:ctx.config.adminPassword},redirect:'manual'});
+ assert.equal(approved.status,302);
+ const code=new URL(approved.headers.get('location')).searchParams.get('code');
+ const grant=await (await ctx.req('/oauth/token',{body:{grant_type:'authorization_code',client_id:client.client_id,code,redirect_uri:redirect,resource:ctx.config.base+'/mcp',code_verifier:verifier}})).json();
+ return {...client,...grant};
+}
+test('separate OAuth connectors retain their identity, routing, permissions and task deduplication',async t=>{
+ const ctx=await setup(t);
+ const appA=await ctx.store.registerApp({name:'Browser',capabilities:[{name:'inspect',readOnly:true}]});
+ const appB=await ctx.store.registerApp({name:'Another application',capabilities:[{name:'inspect',readOnly:true}]});
+ const a=await oauth(ctx,'ChatGPT');const b=await oauth(ctx,'ChatGPT');
+ assert.notEqual(a.client_id,b.client_id);assert.notEqual(a.access_token,b.access_token);
+ for(const [client,app] of [[a,appA],[b,appB]]){
+  const response=await ctx.req('/api/connectors/'+client.client_id,{token:ctx.owner,method:'PUT',body:{name:app.name,app_ids:[app.id]}});
+  assert.equal(response.status,200);
+  const identity=(await ctx.rpc(client.access_token,'connector_identity')).body.result.structuredContent;
+  assert.equal(identity.client_id,client.client_id);assert.deepEqual(identity.app_ids,[app.id]);assert.equal(identity.name,app.name);
+  const visible=(await ctx.rpc(client.access_token,'apps_list')).body.result.structuredContent;
+  assert.deepEqual(visible.apps.map(a=>a.id),[app.id]);
+  const tools=(await ctx.rpc(client.access_token,'',{},'tools/list')).body.result.tools.map(t=>t.name);
+  assert.ok(!tools.includes('godot_run'));assert.ok(!tools.includes('crypto_portfolio'));assert.ok(tools.includes('connector_identity'));
+ }
+ const taskA=(await ctx.rpc(a.access_token,'task_submit',{action:'inspect',request_id:'same-request'})).body.result.structuredContent;
+ const taskB=(await ctx.rpc(b.access_token,'task_submit',{action:'inspect',request_id:'same-request'})).body.result.structuredContent;
+ assert.notEqual(taskA.id,taskB.id);assert.equal(taskA.connector_id,a.client_id);assert.equal(taskB.connector_id,b.client_id);
+ assert.equal((await ctx.rpc(a.access_token,'task_submit',{action:'inspect',request_id:'same-request'})).body.result.structuredContent.id,taskA.id);
+ assert.equal((await ctx.rpc(a.access_token,'task_submit',{action:'inspect',args:{different:true},request_id:'same-request'})).body.result.isError,true);
+ assert.equal((await ctx.rpc(a.access_token,'task_submit',{app_id:appB.id,action:'inspect'})).body.result.isError,true);
+ assert.equal((await ctx.rpc(a.access_token,'task_get',{task_id:taskB.id})).body.result.structuredContent.error,'task_not_found');
+ assert.equal((await ctx.req('/api/apps',{token:a.access_token})).status,403);
+ assert.equal((await ctx.req('/api/connectors/'+a.client_id,{token:a.access_token,method:'PUT',body:{app_ids:null}})).status,403);
+ await ctx.req('/api/connectors/'+a.client_id,{token:ctx.owner,method:'PUT',body:{enabled:false}});
+ assert.equal((await ctx.rpc(a.access_token,'connector_identity')).status,401);
+ assert.equal((await ctx.rpc(b.access_token,'connector_identity')).status,200);
+ const refresh=await ctx.req('/oauth/token',{body:{grant_type:'refresh_token',client_id:a.client_id,refresh_token:a.refresh_token,resource:ctx.config.base+'/mcp'}});
+ assert.equal(refresh.status,400);
+ const restored=await new Store(ctx.config.file).init();
+ assert.deepEqual(restored.state.clients[a.client_id].app_ids,[appA.id]);assert.equal(restored.appAuthorized(appA.id,appA.secret),true);
+});
+test('10,000 connector and application records remain searchable, paged and individually addressable after reload',async t=>{
+ const ctx=await setup(t);const started=performance.now();
+ await ctx.store.change(state=>{
+  for(let i=0;i<10000;i++){
+   const suffix=i.toString(16).padStart(36,'0');const id='chk_'+suffix;
+   state.apps[suffix]={id:suffix,name:'Application '+i,capabilities:[{name:'inspect',readOnly:true}],secret_hash:hash('worker-'+i),registered_at:i,last_seen:null};
+   state.clients[id]={client_name:'Connecteur '+i,redirect_uris:['https://chatgpt.com/connector_platform_oauth_redirect'],enabled:true,app_ids:[suffix],created_at:i};
+  }
+ });
+ const restored=await new Store(ctx.config.file).init();const security=createSecurity(ctx.config,restored);
+ assert.equal(restored.connectorsPage({offset:9975,limit:25}).connectors.length,25);
+ assert.equal(restored.connectorsPage({offset:9975,limit:25}).next_offset,null);
+ assert.equal(restored.connectorsPage({query:'Connecteur 9999'}).connectors[0].name,'Connecteur 9999');
+ for(const i of [0,4999,9999]){
+  const suffix=i.toString(16).padStart(36,'0');const id='chk_'+suffix;
+  const token=security.token('owner','mcp:read mcp:write',id);
+  assert.equal(security.identity(token).client_id,id);
+  assert.equal(restored.appsPage({},security.identity(token).app_ids).apps[0].id,suffix);
+ }
+ const newClient=await (await ctx.req('/oauth/register',{body:{client_name:'Connecteur 10001',redirect_uris:['https://chatgpt.com/connector_platform_oauth_redirect']}})).json();
+ assert.ok(newClient.client_id);
+ 
+ const page=(await ctx.rpc(ctx.owner,'apps_list',{offset:10000,limit:100,include_capabilities:false})).body.result.structuredContent;
+ assert.equal(page.apps.length,1);assert.equal(page.next_offset,null);assert.ok(!('capabilities' in page.apps[0]));
+ await ctx.store.change(state=>{
+  for(let i=10000;i<21000;i++){
+   const suffix=i.toString(16).padStart(36,'0');
+   state.apps[suffix]={id:suffix,name:'Application '+i,capabilities:[{name:'inspect',readOnly:true}],secret_hash:hash('worker-'+i),registered_at:i,last_seen:null};
+   state.clients['chk_'+suffix]={client_name:'Connecteur '+i,redirect_uris:['https://chatgpt.com/connector_platform_oauth_redirect'],created_at:i};
+  }
+ });
+ const extra=await (await ctx.req('/oauth/register',{body:{client_name:'Beyond old cap',redirect_uris:['https://chatgpt.com/connector_platform_oauth_redirect']}})).json();assert.ok(extra.client_id);
+ assert.ok((await ctx.store.registerApp({name:'Beyond old app cap',capabilities:[{name:'inspect',readOnly:true}]})).id);
+ assert.equal(ctx.store.connectorsPage().max_registered,null);
+ console.log('REGISTRY_10000_OK: distinct identities, lookup, pagination, persistence; elapsed_ms='+Math.round(performance.now()-started));
+});
+
+test('public OAuth registration throttles a burst without imposing a lifetime connector cap',async t=>{
+ const ctx=await setup(t);
+ for(let i=0;i<30;i++)assert.equal((await ctx.req('/oauth/register',{body:{client_name:'Test '+i,redirect_uris:['https://chatgpt.com/connector_platform_oauth_redirect']}})).status,201);
+ const response=await ctx.req('/oauth/register',{body:{client_name:'Retry later',redirect_uris:['https://chatgpt.com/connector_platform_oauth_redirect']}});
+ assert.equal(response.status,429);assert.equal(response.headers.get('retry-after'),'60');
+ assert.equal(ctx.store.connectorsPage().max_registered,null);
+});
+
+test('new application types may add capabilities through their own authenticated worker without server code changes',async t=>{
+ const ctx=await setup(t);
+ const app=await ctx.store.registerApp({name:'A future application',capabilities:[{name:'inspect',readOnly:true},{name:'edit',readOnly:false}]});
+ const route='/api/agent/'+app.id+'/capabilities';
+ const payload={capabilities:[{name:'new_reader',readOnly:true},{name:'new_writer',readOnly:false}]};
+ assert.equal((await ctx.req(route,{method:'PUT',token:'bad',body:payload})).status,401);
+ assert.equal((await ctx.req(route,{method:'PUT',token:app.secret,body:payload})).status,200);
+ assert.equal((await ctx.store.submit({app_id:app.id,action:'new_reader'})).state,'queued');
+ assert.equal((await ctx.store.submit({app_id:app.id,action:'new_writer'})).state,'pending_approval');
+ assert.equal((await ctx.req(route,{method:'PUT',token:app.secret,body:{capabilities:[{name:'edit',readOnly:true}]}})).status,400);
+});

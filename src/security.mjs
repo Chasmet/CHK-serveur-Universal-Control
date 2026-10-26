@@ -14,6 +14,7 @@ export function createSecurity(config, store) {
   const resource = config.base + "/mcp";
   const scope = "mcp:read mcp:write";
   const failures = new Map();
+  const registrations = new Map();
   const chatgptUris = [
     "https://chatgpt.com/connector_platform_oauth_redirect",
     /^https:\/\/chatgpt\.com\/connector\/oauth\/[a-zA-Z0-9_-]{6,160}$/
@@ -26,8 +27,9 @@ export function createSecurity(config, store) {
         || (config.allowLocalOAuth && u.protocol === "http:" && ["127.0.0.1", "localhost"].includes(u.hostname) && !u.pathname.includes(".."));
     } catch { return false; }
   };
-  const token = (sub = "owner", requestedScope = scope) => {
+  const token = (sub = "owner", requestedScope = scope, clientId = null) => {
     const payload = { sub, aud: resource, iss: issuer, iat: Math.floor(now() / 1000), exp: Math.floor(now() / 1000) + 3600, scope: requestedScope };
+    if (clientId) payload.client_id = clientId;
     const unsigned = enc({ typ: "JWT", alg: "HS256" }) + "." + enc(payload);
     return unsigned + "." + sign(unsigned, config.jwtSecret);
   };
@@ -41,6 +43,7 @@ export function createSecurity(config, store) {
       const header = JSON.parse(Buffer.from(parts[0], "base64url").toString());
       const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString());
       return header.alg === "HS256" && claims.iss === issuer && claims.aud === resource && claims.sub === "owner" &&
+        (!claims.client_id || (store.state.clients[claims.client_id] && store.state.clients[claims.client_id].enabled !== false)) &&
         claims.exp > Math.floor(now() / 1000) && claims.iat <= Math.floor(now() / 1000) &&
         typeof claims.scope === "string" && claims.scope.split(" ").includes(needed);
     } catch { return false; }
@@ -57,7 +60,7 @@ export function createSecurity(config, store) {
     const redirect = query.get("redirect_uri");
     const codeChallenge = query.get("code_challenge");
     const client = store.state.clients[clientId];
-    if (query.get("response_type") !== "code" || !client || !client.redirect_uris.includes(redirect) ||
+    if (query.get("response_type") !== "code" || !client || client.enabled === false || !client.redirect_uris.includes(redirect) ||
         !allowedUri(redirect) || query.get("code_challenge_method") !== "S256" ||
         !/^[A-Za-z0-9_-]{43,128}$/.test(codeChallenge || "") || query.get("resource") !== resource ||
         (query.get("scope") && query.get("scope").split(" ").some(s => !scope.split(" ").includes(s)))) throw Error("invalid_oauth_request");
@@ -82,10 +85,17 @@ export function createSecurity(config, store) {
       const uris = input.redirect_uris;
       if (!Array.isArray(uris) || uris.length === 0 || uris.length > 5 || !uris.every(allowedUri) ||
           (input.token_endpoint_auth_method && input.token_endpoint_auth_method !== "none")) return json(res, 400, { error: "invalid_client_metadata" });
+      // Bound unauthenticated bursts, never the lifetime connector count.
+      const ip = req.socket.remoteAddress || "unknown";
+      const clock = now();
+      for (const [key, value] of registrations) if (value.until <= clock) registrations.delete(key);
+      const rate = registrations.get(ip) || { count: 0, until: clock + 60000 };
+      if (rate.count >= 30 || (registrations.size >= 4096 && !registrations.has(ip)))
+        return json(res, 429, { error: "registration_busy_retry" }, { "retry-after": "60" });
+      rate.count++; registrations.set(ip, rate);
       const id = "chk_" + uid();
       await store.change(s => {
-        if (Object.keys(s.clients).length >= 100) throw Error("client_limit");
-        s.clients[id] = { redirect_uris: uris, client_name: clean(input.client_name, 80), created_at: now() };
+        s.clients[id] = { redirect_uris: uris, client_name: clean(input.client_name, 80), enabled: true, app_ids: null, created_at: now() };
       });
       return json(res, 201, { client_id: id, client_name: clean(input.client_name, 80), redirect_uris: uris, token_endpoint_auth_method: "none" });
     }
@@ -131,7 +141,8 @@ export function createSecurity(config, store) {
     if (path === "/oauth/token" && req.method === "POST") {
       if (body.grant_type === "authorization_code") {
         const saved = store.state.codes[hash(body.code || "")];
-        if (!saved || saved.expires < now() || saved.clientId !== body.client_id || saved.redirect !== body.redirect_uri ||
+        if (!saved || saved.expires < now() || saved.clientId !== body.client_id || !store.state.clients[saved.clientId]
+            || store.state.clients[saved.clientId].enabled === false || saved.redirect !== body.redirect_uri ||
             body.resource !== resource || !/^[A-Za-z0-9._~-]{43,128}$/.test(body.code_verifier || "")) return json(res, 400, { error: "invalid_grant" });
         const challenge = createHash("sha256").update(body.code_verifier).digest("base64url");
         if (!safeEqual(saved.challenge, challenge)) return json(res, 400, { error: "invalid_grant" });
@@ -140,21 +151,29 @@ export function createSecurity(config, store) {
           delete s.codes[hash(body.code)];
           s.refresh[hash(refresh)] = { clientId: saved.clientId, requestedScope: saved.requestedScope, expires: now() + 30 * 86400000 };
         });
-        return json(res, 200, { access_token: token("owner", saved.requestedScope), token_type: "Bearer", expires_in: 3600, refresh_token: refresh, scope: saved.requestedScope });
+        return json(res, 200, { access_token: token("owner", saved.requestedScope, saved.clientId), token_type: "Bearer", expires_in: 3600, refresh_token: refresh, scope: saved.requestedScope });
       }
       if (body.grant_type === "refresh_token") {
         const saved = store.state.refresh[hash(body.refresh_token || "")];
-        if (!saved || saved.expires < now() || saved.clientId !== body.client_id || body.resource !== resource) return json(res, 400, { error: "invalid_grant" });
+        if (!saved || saved.expires < now() || saved.clientId !== body.client_id || !store.state.clients[saved.clientId] || store.state.clients[saved.clientId].enabled === false || body.resource !== resource) return json(res, 400, { error: "invalid_grant" });
         const refresh = "chkr_" + uid() + uid();
         await store.change(s => {
           delete s.refresh[hash(body.refresh_token)];
           s.refresh[hash(refresh)] = saved;
         });
-        return json(res, 200, { access_token: token("owner", saved.requestedScope), token_type: "Bearer", expires_in: 3600, refresh_token: refresh, scope: saved.requestedScope });
+        return json(res, 200, { access_token: token("owner", saved.requestedScope, saved.clientId), token_type: "Bearer", expires_in: 3600, refresh_token: refresh, scope: saved.requestedScope });
       }
       return json(res, 400, { error: "unsupported_grant_type" });
     }
     return false;
   };
-  return { route, token, verify, bearer, unauthorized, json, resource };
+  function identity(jwt) {
+    if (!verify(jwt)) return null;
+    const claims = JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString());
+    const id = claims.client_id || null;
+    const client = id ? store.state.clients[id] : null;
+    return { client_id: id, identified: Boolean(id), name: client?.label || client?.client_name || "Connexion propriétaire historique",
+      app_ids: client?.app_ids ?? null, enabled: client?.enabled !== false };
+  }
+  return { route, token, verify, identity, bearer, unauthorized, json, resource };
 }

@@ -141,14 +141,24 @@ export async function buildServer(opts = {}) {
         if (bits[4] === "capabilities" && req.method === "PUT")
           return json(res, 200, store.state.apps[id]?.name === "CHK Agent Browser Android · Local 3"
             ? await store.extendBrowserCapabilities(id, body)
-            : await store.extendVisualCapabilities(id, body));
+            : store.state.apps[id]?.name === "CHK Crypto Analyse 2"
+              ? await store.extendVisualCapabilities(id, body)
+              : await store.extendCapabilities(id, body));
         if (bits[4] === "poll" && req.method === "GET") return json(res, 200, { task: await store.poll(id) });
         if (bits[4] === "result" && req.method === "POST") return json(res, 200, { task: await store.result(id, body.task_id, body.result) });
         return json(res, 404, { error: "unknown_agent_endpoint" });
       }
       const needed = req.method === "GET" ? "mcp:read" : "mcp:write";
       if (url.pathname.startsWith("/api/") && !security.verify(security.bearer(req), needed)) return security.unauthorized(res, needed);
-      if (req.method === "GET" && url.pathname === "/api/apps") return json(res, 200, { apps: store.listApps(Boolean(config.legacyUrl)) });
+      // The local owner dashboard manages bindings; ordinary connectors use their scoped MCP tools.
+      if (url.pathname.startsWith("/api/") && security.identity(security.bearer(req))?.client_id)
+        return json(res, 403, { error: "owner_dashboard_required" });
+      const pageOptions = () => ({ offset: Number(url.searchParams.get("offset") || 0),
+        limit: Number(url.searchParams.get("limit") || 25), query: url.searchParams.get("query") || "" });
+      if (req.method === "GET" && url.pathname === "/api/apps") return json(res, 200, store.appsPage(pageOptions(), null, Boolean(config.legacyUrl)));
+      if (req.method === "GET" && url.pathname === "/api/connectors") return json(res, 200, store.connectorsPage(pageOptions()));
+      const connectorMatch = /^\/api\/connectors\/(chk_[a-f0-9]{36})$/.exec(url.pathname);
+      if (connectorMatch && req.method === "PUT") return json(res, 200, await store.configureConnector(connectorMatch[1], body));
       if (req.method === "POST" && url.pathname === "/api/apps") return json(res, 201, await store.registerApp(body));
       if (req.method === "POST" && url.pathname === "/api/invites") return json(res, 201, await store.createInvite());
       if (req.method === "GET" && url.pathname === "/api/tasks") return json(res, 200, { tasks: store.listJobs() });

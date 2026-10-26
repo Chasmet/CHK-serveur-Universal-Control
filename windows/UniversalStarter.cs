@@ -49,7 +49,7 @@ namespace CHKUniversalControl
 
     sealed class MainPanel : Form
     {
-        const string Version = "1.0.1";
+        const string Version = "1.0.2";
         static readonly string Root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CHKUniversalControl");
         static readonly string Runtime = Path.Combine(Root, "runtime-v" + Version);
@@ -94,7 +94,7 @@ namespace CHKUniversalControl
                 Width = 630, Height = 38, Font = new Font("Segoe UI", 20F, FontStyle.Bold),
                 ForeColor = Color.FromArgb(100, 210, 250) };
             Controls.Add(heading);
-            var detail = new Label { Text = "Serveur universel sur ton PC. Pirate Warrior 2 : première application.\nSans Render ni Supabase.",
+            var detail = new Label { Text = "Serveur universel sur ton PC. Connecteurs et applications indépendants.\nSans Render ni Supabase.",
                 Left = 24, Top = 65, Width = 610, Height = 42, ForeColor = Color.LightGray };
             Controls.Add(detail);
 
@@ -596,7 +596,7 @@ namespace CHKUniversalControl
                         throw new Exception("Missing required files in packaged Windows executable");
                 }
             }
-            if(Version!="1.0.1")throw new Exception("Incorrect Windows launcher version");
+            if(Version!="1.0.2")throw new Exception("Incorrect Windows launcher version");
             // Regression for the user's screenshot: Process.HasExited throws when
             // Process.Start was denied and no native process is associated.
             using(var neverStarted = new Process()) {

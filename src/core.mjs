@@ -72,6 +72,41 @@ export class Store {
     if (legacy) apps.push({ id: "chk-legacy", name: "CHK Agent Browser (MCP existant)", capabilities: [{ name: "android_command", readOnly: false }], online: null, connection: "legacy" });
     return apps;
   }
+  appsPage({ offset = 0, limit = 25, query = "", include_capabilities = true } = {}, allowed = null, legacy = false) {
+    const page = this.page(this.listApps(legacy).filter(app => allowed === null || allowed.includes(app.id)), { offset, limit, query });
+    if (include_capabilities === false) page.items = page.items.map(({ capabilities, ...app }) => ({ ...app, capability_count: capabilities.length }));
+    const { items, ...meta } = page;
+    return { apps: items, ...meta };
+  }
+  page(rows, { offset = 0, limit = 25, query = "" } = {}) {
+    if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100)
+      throw Error("invalid_pagination");
+    const needle = clean(query, 100).toLowerCase();
+    const filtered = needle ? rows.filter(row => (row.id + " " + (row.name || "")).toLowerCase().includes(needle)) : rows;
+    return { items: filtered.slice(offset, offset + limit), total: filtered.length, offset, limit,
+      next_offset: offset + limit < filtered.length ? offset + limit : null };
+  }
+  connectorsPage(options = {}) {
+    const rows = Object.entries(this.state.clients).map(([id, c]) => ({ id, name: c.label || c.client_name,
+      enabled: c.enabled !== false, app_ids: c.app_ids ?? null, created_at: c.created_at }));
+    const { items, ...meta } = this.page(rows, options);
+    return { connectors: items, ...meta, max_registered: null };
+  }
+  async configureConnector(id, input) {
+    const client = this.state.clients[id];
+    if (!client) throw Error("unknown_connector");
+    if (input.enabled !== undefined && typeof input.enabled !== "boolean") throw Error("invalid_connector_config");
+    if (input.app_ids !== undefined && input.app_ids !== null && (!Array.isArray(input.app_ids) || input.app_ids.length > 100
+        || input.app_ids.some(id => typeof id !== "string" || !this.state.apps[id]))) throw Error("invalid_connector_apps");
+    await this.change(state => {
+      const c = state.clients[id];
+      if (input.name !== undefined) c.label = clean(input.name, 80);
+      if (input.enabled !== undefined) c.enabled = input.enabled;
+      if (input.app_ids !== undefined) c.app_ids = input.app_ids === null ? null : [...new Set(input.app_ids)];
+    });
+    const c = this.state.clients[id];
+    return { id, name: c.label || c.client_name, enabled: c.enabled !== false, app_ids: c.app_ids ?? null };
+  }
   async registerApp(input) {
     const name = clean(input.name, 80);
     if (!name) throw Error("app_name_required");
@@ -82,7 +117,6 @@ export class Store {
     const secret = "chkapp_" + randomBytes(32).toString("base64url");
     const app = { id: uid(), name, capabilities: capabilities.map(c => ({ name: c.name, readOnly: c.readOnly, description: clean(c.description, 150) })), secret_hash: hash(secret), registered_at: now(), last_seen: null };
     await this.change(s => {
-      if (Object.keys(s.apps).length >= 100) throw Error("app_limit");
       s.apps[app.id] = app;
     });
     return { id: app.id, name, secret, capabilities: app.capabilities };
@@ -106,11 +140,29 @@ export class Store {
     await this.change(s => {
       const invite = s.invites[hash(String(input.invite || ""))];
       if (!invite || invite.expires < now()) throw Error("invalid_invite");
-      if (Object.keys(s.apps).length >= 100) throw Error("app_limit");
       delete s.invites[hash(input.invite)];
       s.apps[app.id] = app;
     });
     return { id: app.id, name, secret, capabilities: app.capabilities };
+  }
+  async extendCapabilities(id, input) {
+    const source = input?.capabilities;
+    if (!Array.isArray(source) || source.length > 80
+        || new Set(source.map(c => c?.name)).size !== source.length
+        || source.some(c => !c || typeof c.name !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(c.name)
+          || typeof c.readOnly !== "boolean")) throw Error("invalid_capabilities");
+    let count;
+    await this.change(state => {
+      const app = state.apps[id];
+      if (!app || app.system) throw Error("unknown_app");
+      const existing = new Map(app.capabilities.map(c => [c.name, c]));
+      for (const c of source) if (existing.has(c.name) && existing.get(c.name).readOnly !== c.readOnly)
+        throw Error("invalid_capability_policy");
+      for (const c of source) existing.set(c.name, {name:c.name,readOnly:c.readOnly,description:clean(c.description,150)});
+      if(existing.size>80) throw Error("capability_limit");
+      app.capabilities=[...existing.values()];count=app.capabilities.length;
+    });
+    return {ok:true,id,capability_count:count};
   }
   async extendVisualCapabilities(id, input) {
     const allowed = new Set(["ui_status", "ui_inspect", "ui_capture",
@@ -170,7 +222,7 @@ export class Store {
     const app = this.state.apps[id];
     return Boolean(app && typeof token === "string" && safeEqual(app.secret_hash, hash(token)));
   }
-  async submit({ app_id, action, args = {}, request_id = "", source = "api", legacy = false }) {
+  async submit({ app_id, action, args = {}, request_id = "", source = "api", legacy = false, connector_id = null }) {
     if (typeof args !== "object" || !args || Array.isArray(args) || Buffer.byteLength(JSON.stringify(args), "utf8") > 96000) throw Error("invalid_arguments");
     const app = this.state.apps[app_id];
     const capability = app?.capabilities.find(c => c.name === action);
@@ -181,12 +233,12 @@ export class Store {
       if (rid) {
         const existing = Object.values(s.jobs).find(job => job.source === source && job.request_id === rid);
         if (existing) {
-          if (existing.app_id !== app_id || existing.action !== action) throw Error("idempotency_conflict");
+          if (existing.app_id !== app_id || existing.action !== action || JSON.stringify(existing.args) !== JSON.stringify(args)) throw Error("idempotency_conflict");
           result = existing;
           return;
         }
       }
-      if (Object.keys(s.jobs).length >= 5000) throw Error("job_limit");
+      if (Object.keys(s.jobs).length >= 100000) throw Error("job_limit");
       // The Android owner opts into this restricted CHK-only accessibility session.
       // The APK enforces the on-device switch and rejects orders/secret fields.
       // Other app actions and all trading capabilities still require approval.
@@ -194,7 +246,7 @@ export class Store {
         && /^ui_(?:click|tap|long_press|swipe|type|back)$/.test(action)
         && capability?.readOnly === false;
       const approval = !capability?.readOnly && !delegatedVisual;
-      const task = { id: uid(), app_id, action, args, request_id: rid, source, state: approval ? "pending_approval" : "queued", created_at: now(), updated_at: now(), attempts: 0, result: null };
+      const task = { id: uid(), app_id, action, args, request_id: rid, source, connector_id, state: approval ? "pending_approval" : "queued", created_at: now(), updated_at: now(), attempts: 0, result: null };
       s.jobs[task.id] = task;
       result = task;
     });
@@ -202,7 +254,7 @@ export class Store {
   }
   publicJob(job) {
     if (!job || !jobStates.has(job.state)) return null;
-    return { id: job.id, app_id: job.app_id, action: job.action, args: job.args, state: job.state, created_at: job.created_at, updated_at: job.updated_at, result: job.result, request_id: job.request_id };
+    return { id: job.id, app_id: job.app_id, connector_id: job.connector_id || null, action: job.action, args: job.args, state: job.state, created_at: job.created_at, updated_at: job.updated_at, result: job.result, request_id: job.request_id };
   }
   getJob(id) { return this.publicJob(this.state.jobs[id]); }
   listJobs() { return Object.values(this.state.jobs).sort((a,b) => b.created_at-a.created_at).slice(0,100).map(job => this.publicJob(job)); }

@@ -13,8 +13,9 @@ const app = await buildServer({host:'127.0.0.1',port:0,base:'http://localhost:87
 await new Promise(r=>app.server.listen(0,'127.0.0.1',r));
 const url='http://127.0.0.1:'+app.server.address().port;
 try {
+  const manifest=await import('node:fs/promises').then(fs=>fs.readFile(join(runtime,'package.json'),'utf8')).then(JSON.parse);
   const health=await (await fetch(url+'/health')).json();
-  assert.equal(health.version,'1.0.1');
+  assert.equal(health.version,manifest.version);
   assert.equal(health.browser_protocol,2);
   const worker=await app.store.registerApp({name:'CHK Agent Browser Android · Local 3',
     capabilities:[{name:'browser_status',readOnly:true}]});
@@ -27,9 +28,10 @@ try {
   assert.ok(list.structuredContent && !Array.isArray(list.structuredContent));
   assert.ok(list.structuredContent.apps.some(a=>a.id===worker.id));
   assert.ok(!JSON.stringify(list).includes(worker.secret));
-  assert.equal((await call('server_status')).structuredContent.version,'1.0.1');
+  assert.equal((await call('server_status')).structuredContent.version,manifest.version);
+  const identity=await call('connector_identity');assert.equal(identity.structuredContent.identified,false);
   assert.equal((await call('chk_read')).structuredContent.legacy_required,false);
-  console.log('PACKAGED_LOCAL3_OK: version 1.0.1, apps_list object, direct Android diagnostics');
+  console.log('PACKAGED_LOCAL3_OK: version '+manifest.version+', apps_list object, connector identity, direct Android diagnostics');
 } finally {
   await new Promise(r=>app.server.close(r));
   await rm(dir,{recursive:true,force:true});
