@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><title>CHK Universal Control — Serveur de mon PC</title>
+<style>
+:root{font:16px system-ui,Segoe UI,sans-serif;color-scheme:dark;color:#edf2fa}
+*{box-sizing:border-box}body{margin:0;background:#0c1525}
+main{max-width:790px;margin:auto;padding:20px 16px 55px}
+h1{font-size:clamp(24px,6vw,34px);margin:4px 0 14px}
+h2{font-size:20px;margin:0 0 8px}
+p,small{line-height:1.5;color:#b5c5d9}
+.card{background:#19283d;border:1px solid #33465d;padding:20px;border-radius:15px;margin:14px 0}
+.kicker{color:#8ccefc;font-size:12px;letter-spacing:.12em;font-weight:800}
+button,.link{display:block;text-decoration:none;width:100%;background:#38bdf8;color:#08243a;border:0;
+ padding:14px;border-radius:10px;text-align:center;font-weight:750;cursor:pointer;font-size:15px;margin:7px 0}
+button.secondary,.link.secondary{background:#283f59;color:#eef3fc;border:1px solid #47617d}
+button:disabled{opacity:.4;cursor:not-allowed}
+.columns{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+@media(max-width:540px){.columns{grid-template-columns:1fr}}
+#state{white-space:pre-wrap;background:#0c1b2b;border:1px solid #2e445e;border-radius:10px;padding:15px;line-height:1.6}
+.ok{color:#88edc0}.warn{color:#ffd89a}.bad{color:#ffb3b3}
+#report{max-height:260px;overflow:auto;overflow-wrap:anywhere;white-space:pre-wrap;font:12px Consolas,monospace;line-height:1.5;background:#0d1724;padding:14px;border-radius:8px}
+code{overflow-wrap:anywhere;color:#93e0fd}
+a{color:#8bd4fa}
+</style></head><body><main>
+<div class="kicker">100 % SUR TON PC • AUCUN RENDER • AUCUN SUPABASE</div>
+<h1>CHK Universal Control</h1>
+<p>Un serveur MCP pour toutes tes applications, hébergé sur ton ordinateur. Pirate Warrior 2 est la première application. Ce panneau est uniquement accessible sur le PC.</p>
+<section class="card"><h2>Installation et connexion</h2>
+<div id="state" role="status" aria-live="polite">Lecture du statut...</div>
+<button id="install" onclick="install()">INSTALLER ET DÉMARRER LE SERVEUR</button>
+<div class="columns">
+<button class="secondary" onclick="refresh()">VÉRIFIER LE SERVEUR</button>
+<a class="link secondary" href="http://127.0.0.1:8787/chat" target="_blank" rel="noopener">OUVRIR MON CHAT LOCAL</a>
+</div>
+</section>
+<section id="authorize" class="card" hidden>
+<h2>Autorisation Tailscale (une seule fois)</h2>
+<p>Une nouvelle machine virtuelle <strong>chk-universal</strong> est créée dans Tailscale. Elle a son propre HTTPS 443 et n'utilise pas le port 443 privé de PC-SALON.</p>
+<a id="authlink" class="link" target="_blank" rel="noopener noreferrer">OUVRIR L’AUTORISATION TAILSCALE</a>
+<p>Connecte-toi avec ton compte Tailscale habituel et valide cette nouvelle machine. Reviens ensuite ici : le serveur vérifie la connexion automatiquement.</p>
+</section>
+<section class="card"><h2>Connecter ChatGPT</h2>
+<p>L’URL MCP de l’identité indépendante sera affichée quand le HTTPS sera prêt. L’authentification est <strong>OAuth</strong>, pas « Sans authentification ».</p>
+<p id="public-url"></p>
+<button id="copy-url" disabled onclick="copy('chat')">COPIER MON LIEN CHATGPT</button>
+<div class="columns">
+<button class="secondary" onclick="copy('password')">COPIER MON MOT DE PASSE PRIVÉ</button>
+<button class="secondary" onclick="diagnostic()">VOIR LES ERREURS</button>
+</div>
+<small>Garde ton mot de passe privé. Il ne sera jamais ajouté à l'adresse MCP. Une installation existante conserve ses données et ses identifiants.</small>
+</section>
+<section class="card"><h2>Mes applications</h2>
+<p><strong>Pirate Warrior 2</strong> : premier module local, commandes Godot à approuver dans le chat. D’autres applications peuvent être enregistrées sans modifier le MCP principal.</p>
+<p>Le serveur actuel sur <code>PC-SALON:10000</code> et le serveur MCP historique sur <code>8443</code> ne sont pas modifiés.</p>
+</section>
+<section class="card"><h2>Rapport de diagnostic</h2><pre id="report">Clique sur « Voir les erreurs » si nécessaire.</pre></section>
+<small>Panneau privé : <code>127.0.0.1:8794</code> | Moteur universel : <code>127.0.0.1:8787</code> | HTTPS public : identité Tailscale indépendante :443.</small>
+</main>
+<script>
+const csrf="__UI_TOKEN__";
+const $=id=>document.getElementById(id);
+async function action(name){
+ const res=await fetch('/api/'+name,{method:'POST',headers:{'X-CHK-UI':csrf,'Content-Type':'application/json'},body:'{}',cache:'no-store'});
+ const data=await res.json();if(!res.ok)throw Error(data.error||res.status);return data;
+}
+async function refresh(){
+ try{
+  const r=await fetch('/api/status',{cache:'no-store'});const s=await r.json();
+  const local=s.local_ok,publicReady=s.public_ok,state=s.tunnel_state;
+  let msg='Serveur local : '+(local?'EN LIGNE':'non démarré')+'\n';
+  msg+='Nouvelle identité Tailscale : '+(state==='online'?'HTTPS 443 ACTIVE':state==='auth_required'?'AUTORISATION À VALIDER':state==='error'?'ERREUR':'préparation')+'\n';
+  msg+=s.message||''; $('state').textContent=msg;
+  $('state').className=local?'ok':s.message?.startsWith('ERREUR')?'bad':'warn';
+  $('install').disabled=s.busy;
+  $('copy-url').disabled=!publicReady;
+  $('public-url').textContent=publicReady?s.tunnel_url+'/mcp':'Adresse MCP en attente de validation Tailscale';
+  let auth=s.auth_url||'';
+  let valid=/^https:\/\/login\.tailscale\.com\/a\/[A-Za-z0-9/_-]+$/.test(auth);
+  $('authorize').hidden=!(state==='auth_required'&&valid);
+  if(valid)$('authlink').href=auth;
+ }catch(e){$('state').textContent='Le panneau local ne répond pas : '+e.message;$('state').className='bad'}
+}
+async function install(){try{await action('install');await refresh()}catch(e){alert(e.message)}}
+async function copy(name){
+ try{
+  const {value}=await action(name==='chat'?'copy-chat':'copy-password');
+  try{await navigator.clipboard.writeText(value)}
+  catch{const t=document.createElement('textarea');t.value=value;document.body.appendChild(t);t.select();document.execCommand('copy');t.remove()}
+  $('state').textContent=name==='chat'?'Lien MCP copié. Choisis OAuth dans ChatGPT.':'Mot de passe copié. Ne le partage pas.';
+ }catch(e){alert(e.message)}
+}
+async function diagnostic(){try{const s=await action('diagnostic');$('report').textContent=s.report||'Aucun signalement.'}catch(e){$('report').textContent=e.message}}
+setInterval(refresh,2500);refresh();
+</script></body></html>

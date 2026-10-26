@@ -1,0 +1,152 @@
+name: CHK Universal - Installer PC Windows Tailscale 443
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/pc-local-universal-pirate-warrior-20261025
+    paths:
+      - 'windows/**'
+      - 'src/**'
+      - 'public/**'
+      - 'tests/**'
+      - 'package.json'
+      - '.github/workflows/windows-universal.yml'
+
+concurrency:
+  group: chk-universal-native-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-universal:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node 22 (test universal MCP backend)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify MCP protocol, OAuth, local Godot integration
+        shell: pwsh
+        run: |
+          npm run check
+          if ($LASTEXITCODE -ne 0) { throw 'Syntax errors' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Universal MCP tests failed' }
+      - name: Go 1.27 (Tailscale tsnet, separate Windows identity)
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Compile separate Tailscale HTTPS 443 funnel
+        shell: pwsh
+        working-directory: windows/funnel
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go mod tidy
+          if ($LASTEXITCODE -ne 0) { throw 'Tailscale module could not download' }
+          go test ./...
+          if ($LASTEXITCODE -ne 0) { throw 'Funnel Go test failed' }
+          New-Item -ItemType Directory -Force '..\dist' | Out-Null
+          go build -trimpath -ldflags="-s -w" -o '..\dist\CHK-Universal-Funnel.exe' .
+          if ($LASTEXITCODE -ne 0) { throw 'Funnel Go build failed' }
+      - name: Bundle entire Universal Control Node source for offline runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Compress-Archive -Path src,public,package.json -DestinationPath windows/dist/universal-runtime.zip -CompressionLevel Optimal
+          if (!(Test-Path windows/dist/universal-runtime.zip)) { throw 'Embedded server package is missing' }
+      - name: Compile real native Windows .NET executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe'
+          if (!(Test-Path $csc)) { throw 'Framework CSC compiler is missing' }
+          $out = Join-Path (Get-Location).Path 'windows\dist\CHK-Universal-Control.exe'
+          $funnel = Join-Path (Get-Location).Path 'windows\dist\CHK-Universal-Funnel.exe'
+          $runtime = Join-Path (Get-Location).Path 'windows\dist\universal-runtime.zip'
+          $html = Join-Path (Get-Location).Path 'windows\site.html'
+          $sourceFile = (Resolve-Path 'windows/UniversalLauncher.cs').Path
+          & $csc /nologo /target:winexe /platform:anycpu /optimize+ "/out:$out" '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' '/reference:System.Web.Extensions.dll' '/reference:System.IO.Compression.dll' '/reference:System.IO.Compression.FileSystem.dll' "/resource:$funnel,chk.funnel" "/resource:$runtime,chk.package" "/resource:$html,chk.web" $sourceFile
+          if ($LASTEXITCODE -ne 0) { throw 'Windows EXE compilation failed' }
+          if (!(Test-Path $out)) { throw 'Real Windows binary missing' }
+          $bytes = [System.IO.File]::ReadAllBytes($out)
+          if ($bytes.Length -lt 100000 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw 'Invalid Windows executable' }
+      - name: Verify isolated Tailscale config and private security
+        shell: pwsh
+        run: |
+          $source = Get-Content windows/UniversalLauncher.cs -Raw
+          $funnel = Get-Content windows/funnel/main.go -Raw
+          if ($source -match 'tailscale funnel --bg' -or $source -match 'funnel --https=') {
+            throw 'Forbidden modification of existing Tailscale routes'
+          }
+          if ($source -notmatch 'chk.funnel' -or $funnel -notmatch 'ListenFunnel\("tcp",":443"') {
+            throw 'Independent 443 tsnet node was not embedded'
+          }
+          if ($source -notmatch '8794' -or $source -notmatch '8787') {
+            throw 'Local dashboard or MCP backend is missing'
+          }
+      - name: Self-test and real double-click Windows dashboard
+        shell: pwsh
+        run: |
+          $exe=(Resolve-Path 'windows/dist/CHK-Universal-Control.exe').Path
+          $test=Start-Process $exe -ArgumentList '--self-test' -Wait -PassThru
+          if ($test.ExitCode -ne 0) { throw "Self-test failed: $($test.ExitCode)" }
+          $proc=Start-Process $exe -PassThru
+          try {
+            $ok=$false
+            for($i=0;$i -lt 50;$i++) {
+              if($proc.HasExited) { throw "Launcher closed unexpectedly: $($proc.ExitCode)" }
+              try {
+                $resp=Invoke-RestMethod 'http://127.0.0.1:8794/api/health' -TimeoutSec 2
+                if ($resp.version -eq '0.2.0') { $ok=$true;break }
+              } catch {}
+              Start-Sleep -Milliseconds 300
+            }
+            if (!$ok) { throw 'Desktop dashboard localhost:8794 did not start' }
+            $page=Invoke-WebRequest 'http://127.0.0.1:8794/' -UseBasicParsing -TimeoutSec 3
+            if (!$page.Content.Contains('INSTALLER ET DÉMARRER LE SERVEUR')) { throw 'Website missing install button' }
+            $status=Invoke-RestMethod 'http://127.0.0.1:8794/api/status' -TimeoutSec 3
+            if (!$status.version -or !$status.tunnel_state) { throw 'Dashboard status missing' }
+            Write-Host 'PASS native launcher and local web site, no Tailscale change required'
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHK-Universal-Control-PC-Windows-v0.2.0
+          path: windows/dist/CHK-Universal-Control.exe
+          if-no-files-found: error
+
+  publication:
+    if: github.ref == 'refs/heads/feature/pc-local-universal-pirate-warrior-20261025'
+    needs: windows-universal
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: CHK-Universal-Control-PC-Windows-v0.2.0
+          path: release
+      - name: Publish Windows installer as prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          test -s release/CHK-Universal-Control.exe
+          TAG="chk-universal-pc-v0.2.0"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/CHK-Universal-Control.exe --clobber
+          else
+            gh release create "$TAG" release/CHK-Universal-Control.exe \
+              --title "CHK Universal Control 0.2.0 - PC autonome + Funnel indépendant" \
+              --notes "VRAI EXE Windows testé. Serveur MCP local avec Pirate Warrior 2. Tailscale tsnet crée une seconde identité HTTPS 443 séparée du PC-SALON sans modifier ses ports 443/8443/10000. Un clic d'autorisation Tailscale est nécessaire. Le lien OAuth ChatGPT doit être vérifié après installation. Runtime Node officiel installé automatiquement sur le PC. Version préalable de test." \
+              --prerelease

@@ -1,4 +1,14 @@
+import { SERVER_VERSION } from "./version.mjs";
+import { cryptoTools } from "./crypto.mjs";
+import { cryptoDeviceTools } from "./crypto-device-tools.mjs";
+import { asReadOnly as cryptoMarketTools } from "./crypto-markets.mjs";
+import { marketTools as advancedMarketTools } from "./crypto-market.mjs";
+import { monitorTools } from "./crypto-monitor.mjs";
+
 const tools = [
+  { name: "godot_status", title: "Pirate Warrior 2 - état", description: "Vérifie la connexion à l’éditeur Godot réel sur le PC, sans prétendre qu’une tâche est terminée.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
+  { name: "godot_run", title: "Pirate Warrior 2 - commande", description: "Prépare une commande Godot, à approuver dans le panneau local avant son exécution réelle.", inputSchema: { type: "object", required: ["method"], properties: { method: { type: "string" }, params: { type: "object" }, request_id: { type: "string" } } } },
+  { name: "godot_batch", title: "Pirate Warrior 2 - commandes groupées", description: "Prépare 1 à 12 commandes Godot, à approuver avant exécution.", inputSchema: { type: "object", required: ["commands"], properties: { commands: { type: "array", minItems: 1, maxItems: 12, items: { type: "object", required: ["method"], properties: { method: { type: "string" }, params: { type: "object" } } } }, request_id: { type: "string" } } } },
   { name: "server_status", title: "Etat CHK Universal", description: "Informations non sensibles sur le serveur et le moteur IA.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "apps_list", title: "Applications connectees", description: "Lister les applications enregistrées et les capacités exposées.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "app_register", title: "Enregistrer application", description: "Enregistre une application avec capacités déclarées. Retourne une clé privée UNE SEULE FOIS; ne la publiez jamais.", inputSchema: { type: "object", required: ["name", "capabilities"], properties: { name: { type: "string" }, capabilities: { type: "array", items: { type: "object", required: ["name", "readOnly"], properties: { name: { type: "string" }, description: { type: "string" }, readOnly: { type: "boolean" } } } } } } },
@@ -7,7 +17,6 @@ const tools = [
   { name: "task_get", title: "Etat de tâche", description: "Lire le résultat réel ou l'état d'une tâche.", inputSchema: { type: "object", required: ["task_id"], properties: { task_id: { type: "string" } } }, readOnlyHint: true },
   { name: "task_cancel", title: "Annuler commande", description: "Annule une tâche encore non exécutée.", inputSchema: { type: "object", required: ["task_id"], properties: { task_id: { type: "string" } } } },
   { name: "ai_chat", title: "Assistant Qwen open source", description: "Pose une question au modèle local via Ollama et orchestre des outils disponibles. Modèle externe optionnel.", inputSchema: { type: "object", required: ["message"], properties: { message: { type: "string" } } } },
-  { name: "crypto_status", title: "CHK Crypto sur Android", description: "Etat du CHK Crypto appairé, en ligne et outils visuels déclarés.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "crypto_capture", title: "Voir CHK Crypto", description: "Demande une capture JPEG de CHK Crypto, exclusivement si l'utilisateur a activé Accessibilité et vision. Retourne un task_id à suivre.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "crypto_inspect", title: "Lire les contrôles CHK Crypto", description: "Analyse les boutons et leurs positions sur l'écran CHK Crypto ouvert. Retourne task_id.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "crypto_action", title: "Contrôler CHK Crypto", description: "Appui, souris, balayage, saisie de texte ou retour Android, uniquement dans CHK Crypto après activation volontaire du service Accessibilité. Aucun ordre ni secret autorisé; retourne task_id, ne pas confondre queued et completed.", inputSchema: { type: "object", required: ["action"], properties: { action: {type:"string", enum:["ui_tap","ui_click","ui_long_press","ui_swipe","ui_type","ui_back"]}, args:{type:"object"}, request_id:{type:"string"} } } },
@@ -33,15 +42,20 @@ function browserResult(job, store) {
   return { content: [{ type: "text", text: JSON.stringify(safe) },
     { type: "image", mimeType: "image/jpeg", data: jpeg }], structuredContent: safe, isError: false };
 }
+
 function exposedTools() {
-  return tools.map(({ readOnlyHint, ...tool }) => ({
+  return [...tools,...cryptoTools,...cryptoDeviceTools,...cryptoMarketTools,...advancedMarketTools.filter(t=>!["crypto_orderbook","crypto_multi_timeframe"].includes(t.name)),...monitorTools,
+    {name:"crypto_chart_state",title:"CHK Crypto — graphique Android réel",description:"Lit la paire, l'unité de temps, les indicateurs et le viewport enregistrés par le vrai graphique Android; la tâche peut être en attente.",inputSchema:{type:"object",properties:{}},readOnlyHint:true},
+    {name:"crypto_device_status",title:"CHK Crypto — agent Android",description:"État du dispositif, de la connexion Internet et de l'agent MCP Android.",inputSchema:{type:"object",properties:{}},readOnlyHint:true},
+    {name:"crypto_chart_control",title:"Piloter graphique CHK Crypto",description:"Modifie la paire, timeframe, profil, indicateurs, zoom ou pan de l'application Android uniquement après approbation locale. Aucune opération de trading.",inputSchema:{type:"object",required:["action"],properties:{action:{type:"string",enum:["set_symbol","set_timeframe","set_profile","set_indicators","zoom_in","zoom_out","pan_left","pan_right","go_to_latest","set_auto_scale"]},args:{type:"object"}}}}
+  ].map(({ readOnlyHint, ...tool }) => ({
     ...tool,
     annotations: { readOnlyHint: Boolean(readOnlyHint), destructiveHint: !readOnlyHint, openWorldHint: false },
     securitySchemes: [{ type: "oauth2", scopes: [readOnlyHint ? "mcp:read" : "mcp:write"] }]
   }));
 }
-export function createMCP(config, store, security, ai, legacyCall, approveTask) {
-  const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "crypto_action"]);
+export function createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto, markets, advancedMarket, monitor) {
+  const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "godot_run", "godot_batch", "crypto_chart_control", "crypto_monitor_config", "crypto_action"]);
   return async function handle(rpc, req, res) {
     if (!rpc || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string" || Array.isArray(rpc)) {
       return security.json(res, 400, { jsonrpc: "2.0", id: rpc?.id ?? null, error: { code: -32600, message: "Invalid Request" } });
@@ -52,7 +66,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask) 
     let result;
     try {
       if (rpc.method === "initialize") {
-        result = { protocolVersion: ["2026-07-28", "2025-11-25", "2025-06-18"].includes(rpc.params?.protocolVersion) ? rpc.params.protocolVersion : "2025-06-18", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "CHK Universal Control", version: "0.1.0" } };
+        result = { protocolVersion: ["2026-07-28", "2025-11-25", "2025-06-18"].includes(rpc.params?.protocolVersion) ? rpc.params.protocolVersion : "2025-06-18", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "CHK Universal Control", version: SERVER_VERSION } };
       } else if (rpc.method === "ping") result = {};
       else if (rpc.method === "tools/list") result = { tools: exposedTools() };
       else if (rpc.method === "tools/call") {
@@ -67,11 +81,12 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask) 
             && v.capabilities?.some(c => c.name === "ui_status"))
           .sort((a,b) => Number(b.online) - Number(a.online)
             || Number(b.registered_at) - Number(a.registered_at))[0];
-        if (name === "crypto_status") {
-          const app = cryptoApp();
-          output = app ? { ok: true, app_id: app.id, online: app.online, last_seen: app.last_seen,
-            capabilities: app.capabilities.filter(c => c.name.startsWith("ui_")).map(c => c.name) }
-            : { error: "crypto_visual_capabilities_not_registered" };
+        if (name === "godot_status") output = await godot.status();
+        else if (name === "godot_run" || name === "godot_batch") {
+          if (name === "godot_run" && (typeof a.method !== "string" || a.method.length < 3 || a.method.length > 120)) throw Error("godot_invalid_method");
+          if (name === "godot_batch" && (!Array.isArray(a.commands) || a.commands.length < 1 || a.commands.length > 12)) throw Error("godot_invalid_batch");
+          const { request_id, ...args } = a;
+          output = await store.submit({ app_id: "godot-local", action: name, args, source: "mcp", request_id });
         }
         else if (name === "crypto_capture" || name === "crypto_inspect" || name === "crypto_action") {
           const app = cryptoApp();
@@ -87,17 +102,43 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask) 
         else if (name === "crypto_result") {
           output = store.getJob(a.task_id) || { error: "task_not_found" };
         }
-        else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: store.listApps(Boolean(config.legacyUrl)).length, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl), browser_connected: Boolean(browserApp()?.online), browser_protocol: 2 };
+        else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: store.listApps(Boolean(config.legacyUrl)).length, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl), version: SERVER_VERSION, browser_protocol: 2, browser_connected: Boolean(browserApp()?.online) };
         else if (name === "apps_list") output = { apps: store.listApps(Boolean(config.legacyUrl)) };
+        else if (name === "crypto_ticker") output = await markets.ticker(a);
+        else if (name === "crypto_orderbook") output = await markets.orderbook(a);
+        else if (name === "crypto_candles") output = await markets.candles(a);
+        else if (name === "crypto_indicators") output = await markets.indicators(a);
+        else if (name === "crypto_multi_timeframe") output = await markets.multi(a);
+        else if (name === "crypto_instrument_rules") output = await markets.rules(a);
+        else if (name === "crypto_market_movers") output = await markets.movers(a);
+        else if (name === "crypto_web_read") output = await markets.webRead(a);
+        else if (name === "crypto_status") output = crypto.status();
+        else if (name === "crypto_scan_bybit") output = await crypto.scan(a);
+        else if (name === "crypto_list_bybit") output = await crypto.page(a);
+        else if (name === "crypto_portfolio") output = await crypto.dispatch("crypto_portfolio");
+        else if (name === "crypto_tracking") output = await crypto.dispatch("crypto_tracking");
+        else if (name === "crypto_task_result") output = crypto.result(a);
+        else if (name === "crypto_alerts") output = await crypto.dispatch("crypto_alerts");
+        else if (name === "crypto_bot_status") output = await crypto.dispatch("crypto_bot_status");
+        else if (name === "crypto_app_status") output = await crypto.dispatch("crypto_app_status");
+        else if (name === "crypto_chart_state") output = await crypto.dispatch("crypto_chart_state");
+        else if (name === "crypto_device_status") output = await crypto.dispatch("crypto_device_status");
+        else if (name === "crypto_chart_control") output = await crypto.chartControl(a);
+        else if (name === "crypto_market_chart") output = await advancedMarket.chart(a);
+        else if (name === "crypto_recent_trades") output = await advancedMarket.trades(a);
+        else if (name === "crypto_internet_news") output = await advancedMarket.news(a);
+        else if (name === "crypto_radar") output = await monitor.radar(a);
+        else if (name === "crypto_monitor_status") output = monitor.status();
+        else if (name === "crypto_monitor_config") output = await monitor.config(a);
+        else if (name === "crypto_monitor_run") output = await monitor.run();
+        else if (name === "crypto_monitor_events") output = monitor.events(a);
         else if (name === "app_register") output = await store.registerApp(a);
         else if (name === "app_invite") output = await store.createInvite();
         else if (name === "task_submit") output = await store.submit({ ...a, source: "mcp", legacy: Boolean(config.legacyUrl) });
         else if (name === "task_get") output = store.getJob(a.task_id) || { error: "task_not_found" };
         else if (name === "task_cancel") output = await store.cancel(a.task_id);
         else if (name === "ai_chat") output = await ai.chat(a.message);
-        else if (name === "chk_read") output = !["server_info", "android_status"].includes(a.name || "android_status") ? { error: "forbidden_read_tool" } : config.legacyUrl ? await legacyCall(a.name || "android_status", {}) : browserApp()
-          ? { connection: "paired_worker", app: browserApp(), legacy_required: false }
-          : { error: "browser_not_paired", legacy_required: false };
+        else if (name === "chk_read") output = !["server_info", "android_status"].includes(a.name || "android_status") ? { error: "forbidden_read_tool" } : config.legacyUrl ? await legacyCall(a.name || "android_status", {}) : browserApp() ? { connection: "paired_worker", app: browserApp(), legacy_required: false } : { error: "browser_not_paired", legacy_required: false };
         else return security.json(res, 200, { jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "Unknown tool" } });
         if (name === "crypto_result" && output?.state === "completed"
               && output?.action === "ui_capture" && output?.result?.jpegBase64) {
@@ -111,8 +152,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask) 
             structuredContent: safe,
             isError: false
           };
-        } else if (name === "task_get") result = browserResult(output, store);
-        else result = textResult(output);
+        } else result = name === "task_get" ? browserResult(output, store) : textResult(output);
       } else return security.json(res, 200, { jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "Method not found" } });
       return security.json(res, 200, { jsonrpc: "2.0", id: rpc.id, result });
     } catch (err) {

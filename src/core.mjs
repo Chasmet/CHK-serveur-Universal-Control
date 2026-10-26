@@ -15,7 +15,6 @@ export const clean = (value, max = 120) => String(value ?? "").trim().slice(0, m
 const browserCapabilities = JSON.parse(readFileSync(new URL("./browser-capabilities.json", import.meta.url), "utf8"));
 const browserName = "CHK Agent Browser Android · Local 3";
 const jobStates = new Set(["pending_approval", "queued", "leased", "completed", "failed", "unknown", "cancelled"]);
-// Bounded JPEG screen previews are allowed only for explicitly opted-in CHK Crypto.
 const MAX_RESULT = 350000;
 
 export class Store {
@@ -37,7 +36,20 @@ export class Store {
       if (err.code !== "ENOENT") throw err;
       await this.change(() => true);
     }
+    await this.ensureGodotApp();
     return this;
+  }
+  async ensureGodotApp() {
+    if (this.state.apps["godot-local"]) return;
+    await this.change(state => { state.apps["godot-local"] = {
+      id: "godot-local", name: "Pirate Warrior 2 (Godot local)",
+      capabilities: [
+        { name: "godot_status", readOnly: true, description: "État de l’éditeur local" },
+        { name: "godot_run", readOnly: false, description: "Commande Godot avec approbation" },
+        { name: "godot_batch", readOnly: false, description: "Lot de commandes Godot avec approbation" }
+      ],
+      system: true, registered_at: now(), last_seen: null
+    }; });
   }
   async change(fn) {
     const operation = this.lock.then(async () => {
@@ -54,7 +66,8 @@ export class Store {
   listApps(legacy = false) {
     const apps = Object.values(this.state.apps).map(app => ({
       id: app.id, name: app.name, diagnostic: app.diagnostic, capabilities: app.capabilities, registered_at: app.registered_at,
-      last_seen: app.last_seen, online: Boolean(app.last_seen && now() - app.last_seen < 90000)
+      last_seen: app.last_seen, online: app.system ? null : Boolean(app.last_seen && now() - app.last_seen < 90000),
+      connection: app.system ? "first_party_local" : "worker"
     }));
     if (legacy) apps.push({ id: "chk-legacy", name: "CHK Agent Browser (MCP existant)", capabilities: [{ name: "android_command", readOnly: false }], online: null, connection: "legacy" });
     return apps;
@@ -99,9 +112,6 @@ export class Store {
     });
     return { id: app.id, name, secret, capabilities: app.capabilities };
   }
-  /** A paired Android worker may add only its fixed UI tool names, never weaken
-   * an existing readOnly policy or register arbitrary trading operations.
-   */
   async extendVisualCapabilities(id, input) {
     const allowed = new Set(["ui_status", "ui_inspect", "ui_capture",
       "ui_click", "ui_tap", "ui_long_press", "ui_swipe", "ui_type", "ui_back"]);
@@ -220,7 +230,7 @@ export class Store {
     let result = null;
     await this.change(s => {
       const app = s.apps[appId];
-      if (!app) throw Error("unknown_app");
+      if (!app || app.system) throw Error("unknown_app");
       app.last_seen = now();
       const job = Object.values(s.jobs).find(j => j.app_id === appId && j.state === "queued");
       if (job) {
@@ -237,7 +247,6 @@ export class Store {
     await this.change(s => {
       job = s.jobs[id];
       if (!job || job.app_id !== appId) throw Error("invalid_job_result");
-      // A lost HTTP acknowledgement must not trap the Android durable outbox.
       if (["completed", "failed"].includes(job.state)
           && JSON.stringify(job.result) === JSON.stringify(payload)) return;
       if (job.state !== "leased") throw Error("invalid_job_result");
@@ -252,7 +261,7 @@ export class Store {
   async markLegacy(id, value, state) {
     await this.change(s => {
       const job = s.jobs[id];
-      if (!job || job.app_id !== "chk-legacy") throw Error("not_legacy_job");
+      if (!job || !["chk-legacy", "godot-local"].includes(job.app_id)) throw Error("not_builtin_job");
       if (job.state !== "queued" && !(job.state === "leased" && ["completed", "failed", "unknown"].includes(state))) throw Error("invalid_legacy_state");
       job.state = state;
       job.result = value;

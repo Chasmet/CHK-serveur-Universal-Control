@@ -96,10 +96,10 @@ export function createSecurity(config, store) {
       if (req.method === "GET") {
         res.writeHead(200, {
           "content-type": "text/html; charset=utf-8", "cache-control": "no-store",
-          "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+          "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
           "x-frame-options": "DENY"
         });
-        return res.end('<!doctype html><html lang="fr"><meta charset="utf-8"><title>CHK Autorisation</title><style>body{font:16px sans-serif;max-width:460px;margin:10vh auto;padding:24px;background:#111827;color:#fff}input,button{font:inherit;padding:12px;width:100%;box-sizing:border-box;margin:10px 0}button{background:#2563eb;color:white;border:0}</style><h1>CHK Universal Control</h1><p>Autoriser ChatGPT à consulter et commander les applications ? Les actions sensibles nécessiteront une confirmation.</p><form method="POST"><label>Mot de passe administrateur<input name="password" type="password" required autocomplete="current-password"></label><button>Autoriser</button></form></html>');
+        return res.end('<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CHK — Autoriser ChatGPT</title><style>body{font:16px sans-serif;max-width:480px;margin:7vh auto;padding:24px;background:#111827;color:#fff}input,button{font:inherit;padding:12px;width:100%;box-sizing:border-box;margin:10px 0}button{background:#2563eb;color:white;border:0;cursor:pointer}button:disabled{opacity:.5}#feedback{min-height:2em;color:#bfe5ff;white-space:pre-wrap}</style><h1>CHK Universal Control</h1><p>Autoriser ChatGPT à consulter et commander les applications ? Les actions sensibles nécessiteront une confirmation.</p><form id="chk-oauth-form" method="POST"><label>Mot de passe administrateur<input name="password" type="password" required autocomplete="current-password"></label><button id="chk-oauth-button" type="submit">Autoriser ChatGPT</button><p id="feedback" role="status" aria-live="polite"></p></form><script src="/oauth-login.js" defer></script></html>');
       }
       const ip = req.socket.remoteAddress || "unknown";
       const attempts = failures.get(ip) || { count: 0, until: 0 };
@@ -119,6 +119,12 @@ export function createSecurity(config, store) {
       redirectUrl.searchParams.set("code", authCode);
       if (url.searchParams.has("state")) redirectUrl.searchParams.set("state", url.searchParams.get("state"));
       redirectUrl.searchParams.set("iss", issuer);
+      // The mobile OAuth form uses JSON to render a clear success or error
+      // instead of silently waiting for a cross-site redirect to complete.
+      // A non-JS browser still receives the standard OAuth 302 response.
+      if ((req.headers.accept || "").includes("application/json")) {
+        return json(res, 200, { redirect_to: redirectUrl.href });
+      }
       res.writeHead(302, { location: redirectUrl.href, "cache-control": "no-store", referrerPolicy: "no-referrer" });
       return res.end();
     }

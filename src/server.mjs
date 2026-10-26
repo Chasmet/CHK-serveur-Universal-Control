@@ -1,3 +1,4 @@
+import { SERVER_VERSION } from "./version.mjs";
 import { createServer as httpServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -5,6 +6,11 @@ import { Store, clean, safeEqual } from "./core.mjs";
 import { createSecurity } from "./security.mjs";
 import { createAI } from "./ai.mjs";
 import { createMCP } from "./mcp.mjs";
+import { createGodotBridge } from "./godot.mjs";
+import { createCryptoModule } from "./crypto.mjs";
+import { createMarketResearch } from "./crypto-markets.mjs";
+import { createCryptoMarket } from "./crypto-market.mjs";
+import { createCryptoMonitor } from "./crypto-monitor.mjs";
 
 const baseConfig = () => ({
   port: Number(process.env.PORT || 8787), host: process.env.HOST || "127.0.0.1",
@@ -37,6 +43,11 @@ export async function buildServer(opts = {}) {
   const store = await new Store(config.file).init();
   const security = createSecurity(config, store);
   const ai = createAI(config, store);
+  const godot = createGodotBridge();
+  const crypto = createCryptoModule(store);
+  const markets = createMarketResearch();
+  const advancedMarket = createCryptoMarket();
+  const monitor = createCryptoMonitor(store, crypto);
   const loginFailures = new Map();
   async function legacyCall(tool, args) {
     if (!config.legacyUrl) throw Error("legacy_not_configured");
@@ -58,6 +69,16 @@ export async function buildServer(opts = {}) {
   }
   async function approveTask(id) {
     const job = await store.approve(id);
+    if (job.app_id === "godot-local") {
+      // A write never repeats silently after a lost or timed-out response.
+      await store.markLegacy(id, null, "leased");
+      try {
+        const result = await godot.execute(job.action, job.args);
+        return await store.markLegacy(id, result, result.ok === false ? "failed" : "completed");
+      } catch (error) {
+        return await store.markLegacy(id, { error: String(error.message).slice(0, 160), execution_state: "unknown", retry_command: false }, "unknown");
+      }
+    }
     if (job.app_id !== "chk-legacy") return job;
     // Mark as executing before outbound call: timeout/crash must NOT auto-repeat a write.
     await store.markLegacy(id, null, "leased");
@@ -68,7 +89,7 @@ export async function buildServer(opts = {}) {
       return await store.markLegacy(id, { error: e.message, execution_state: "unknown", retry_command: false }, "unknown");
     }
   }
-  const mcp = createMCP(config, store, security, ai, legacyCall, approveTask);
+  const mcp = createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto, markets, advancedMarket, monitor);
   const json = security.json;
   const server = httpServer(async (req, res) => {
     res.setHeader("x-content-type-options", "nosniff");
@@ -76,11 +97,15 @@ export async function buildServer(opts = {}) {
     res.setHeader("x-frame-options", "DENY");
     const url = new URL(req.url, config.base);
     try {
-      if (req.method === "GET" && url.pathname === "/health") return json(res, 200, { status: "ok", service: "CHK Universal Control" });
+      if (req.method === "GET" && url.pathname === "/health") return json(res, 200, { status: "ok", service: "CHK Universal Control", version: SERVER_VERSION, browser_protocol: 2 });
       if (req.method === "GET" && url.pathname === "/") { res.writeHead(302, { location: "/chat" }); return res.end(); }
       if (req.method === "GET" && url.pathname === "/chat") {
         res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-security-policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" });
         return res.end(await readFile(fileURLToPath(new URL("../public/chat.html", import.meta.url)), "utf8"));
+      }
+      if (req.method === "GET" && url.pathname === "/oauth-login.js") {
+        res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+        return res.end(await readFile(fileURLToPath(new URL("../public/oauth-login.js", import.meta.url)), "utf8"));
       }
       if (req.method === "GET" && url.pathname === "/chat.js") {
         res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });

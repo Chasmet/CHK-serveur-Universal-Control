@@ -1,0 +1,137 @@
+name: CHK SERVEUR PC UNIVERSEL - Windows HTTPS 443
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'windows/**'
+      - '.github/workflows/build-universal-windows.yml'
+      - 'package.json'
+      - 'validation/**'
+      - 'tests/**'
+      - 'release-notes-1.0.1.md'
+concurrency:
+  group: chk-universal-oneclick-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+      - name: Vérifier serveur MCP multi-applications et Pirate Warrior 2
+        shell: pwsh
+        run: |
+          npm run check
+          if ($LASTEXITCODE -ne 0) { throw 'Server syntax error' }
+          npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Server integration tests failed' }
+      - name: Compiler la deuxième identité Tailscale Windows
+        shell: pwsh
+        working-directory: windows/tsbridge
+        run: |
+          go mod init chk-universal-tsbridge
+          if ($LASTEXITCODE -ne 0) { throw 'go mod init failed' }
+          go get tailscale.com@v1.104.2
+          if ($LASTEXITCODE -ne 0) { throw 'Go dependency failed' }
+          go mod tidy
+          if ($LASTEXITCODE -ne 0) { throw 'Go tidy failed' }
+          go test -v .
+          if ($LASTEXITCODE -ne 0) { throw 'Tailscale bridge tests failed' }
+          New-Item -ItemType Directory -Force '../runtime' | Out-Null
+          go build -trimpath -ldflags '-s -w' -o '../runtime/tailscale-bridge.exe' .
+          if ($LASTEXITCODE -ne 0) { throw 'Tailscale bridge build failed' }
+          # Real Windows EXE first-run test: create the files that failed on PC-SALON.
+          $env:CHK_UNIVERSAL_HOME = Join-Path $env:RUNNER_TEMP 'chk-pc-universel-first-run'
+          $storageOutput = & '../runtime/tailscale-bridge.exe' --diagnostic-storage 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0 -or $storageOutput -notmatch 'STORAGE_TEST_OK') {
+            Write-Host $storageOutput
+            throw 'First-run Windows Tailscale storage regression'
+          }
+          Write-Host 'First-run Tailscale log config and state created successfully on Windows'
+          $env:CHK_UNIVERSAL_HOME = Join-Path $env:RUNNER_TEMP 'CHKServeurPC-Storage-Test'
+          & '../runtime/tailscale-bridge.exe' '--diagnostic-storage'
+          if ($LASTEXITCODE -ne 0) { throw 'Real Windows atomic Tailscale storage test failed' }
+      - name: Emballer Node, Tailscale et le MCP universel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force 'windows/runtime/src','windows/runtime/public' | Out-Null
+          $node=(Get-Command node).Source
+          Copy-Item $node 'windows/runtime/node.exe'
+          Copy-Item 'src/*.mjs' 'windows/runtime/src/'
+          Copy-Item 'src/*.json' 'windows/runtime/src/'
+          Copy-Item 'public/*.html' 'windows/runtime/public/'
+          Copy-Item 'public/*.js' 'windows/runtime/public/'
+          Copy-Item 'package.json' 'windows/runtime/'
+          if (!(Test-Path 'windows/runtime/tailscale-bridge.exe')) { throw 'Tailscale executable missing' }
+          Compress-Archive -Path 'windows/runtime/*' -DestinationPath 'windows/runtime.zip' -Force
+          if (!(Test-Path 'windows/runtime.zip')) { throw 'Package archive missing' }
+      - name: Compiler et tester le vrai programme Windows natif
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework/v4.0.30319/csc.exe'
+          if (!(Test-Path $csc)) { throw 'Windows native compiler missing' }
+          New-Item -ItemType Directory -Force 'dist' | Out-Null
+          $exe=(Join-Path (Get-Location).Path 'dist/CHK-SERVEUR-PC-UNIVERSEL-v1.0.1.exe')
+          $archive=(Join-Path (Get-Location).Path 'windows/runtime.zip')
+          $source=(Resolve-Path 'windows/UniversalStarter.cs').Path
+          if (!(Test-Path $source)) { throw 'Windows C# launcher file missing' }
+          & $csc /nologo /target:winexe /platform:anycpu /optimize+ "/out:$exe" '/reference:System.dll' '/reference:System.Windows.Forms.dll' '/reference:System.Drawing.dll' '/reference:System.Web.Extensions.dll' '/reference:System.IO.Compression.dll' '/reference:System.IO.Compression.FileSystem.dll' "/resource:$archive,chk.runtime" "$source"
+          if ($LASTEXITCODE -ne 0) { throw 'Windows launcher compilation failed' }
+          $bytes=[System.IO.File]::ReadAllBytes($exe)
+          if ($bytes.Length -lt 100000 -or $bytes[0] -ne 77 -or $bytes[1] -ne 90) { throw 'Invalid Windows executable (PE)' }
+          $test=Start-Process -FilePath $exe -ArgumentList '--self-test' -Wait -PassThru
+          if ($test.ExitCode -ne 0) { throw ('Real EXE self-test failed: ' + $test.ExitCode) }
+          Write-Output 'Windows EXE validated: Node, independent Tailscale bridge, MCP files'
+      - name: Vérifier le serveur réellement embarqué avec son Node Windows
+        shell: pwsh
+        run: |
+          & 'windows/runtime/node.exe' 'validation/verify-packaged-runtime.mjs' 'windows/runtime'
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged Local 3 protocol verification failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CHK-SERVEUR-PC-UNIVERSEL-Windows-v1.0.1
+          path: dist/CHK-SERVEUR-PC-UNIVERSEL-v1.0.1.exe
+          if-no-files-found: error
+          retention-days: 30
+  release:
+    if: github.ref == 'refs/heads/main'
+    needs: build-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: CHK-SERVEUR-PC-UNIVERSEL-Windows-v1.0.1
+          path: release
+      - name: Publier le vrai programme Windows natif
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -s release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.1.exe
+          sha256sum release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.1.exe > release/SHA256SUMS.txt
+          TAG="chk-serveur-pc-v1.0.1"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.1.exe --clobber
+          else
+            gh release create "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.1.exe release/SHA256SUMS.txt --target "$GITHUB_SHA" --title "CHK SERVEUR PC UNIVERSEL 1.0.1" --notes-file release-notes-1.0.1.md
+          fi
