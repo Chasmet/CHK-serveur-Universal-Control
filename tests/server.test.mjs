@@ -109,3 +109,74 @@ test("crash leaves leased tasks UNKNOWN without re-execution", async t => {
   const reloaded = await new Store(file).init();
   assert.equal(reloaded.getJob(job.task.id).state, "unknown");
 });
+
+
+test("MCP apps_list returns structured object and exposes online Android connection", async t => {
+  const { request, access_token } = await setup(t);
+  const callMcp = async (name, args = {}) => {
+    const http = await request("/mcp", {
+      method: "POST", bearer: access_token,
+      body: { jsonrpc: "2.0", id: 77, method: "tools/call", params: { name, arguments: args } }
+    });
+    assert.equal(http.status, 200);
+    const payload = await http.json();
+    assert.ok(payload.result, JSON.stringify(payload.error));
+    return payload.result;
+  };
+  const before = await callMcp("apps_list");
+  assert.equal(typeof before.structuredContent, "object");
+  assert.ok(!Array.isArray(before.structuredContent),
+    "ChatGPT MCP requires structuredContent to be a JSON object, never an array");
+  assert.deepEqual(before.structuredContent.apps, []);
+  const invite = await callMcp("app_invite");
+  const onboarding = await request("/api/onboard", {
+    method: "POST", body: {
+      name: "CHK Agent Browser Android · Local 3",
+      invite: invite.structuredContent.invite,
+      capabilities: [
+        { name: "browser_status", readOnly: true },
+        { name: "files_list", readOnly: true },
+        { name: "files_move", readOnly: false }
+      ]
+    }
+  });
+  assert.equal(onboarding.status, 201);
+  const app = await onboarding.json();
+  const listed = await callMcp("apps_list");
+  assert.ok(!Array.isArray(listed.structuredContent));
+  assert.equal(listed.structuredContent.apps.length, 1);
+  const entry = listed.structuredContent.apps[0];
+  assert.equal(entry.id, app.id);
+  assert.equal(entry.name, "CHK Agent Browser Android · Local 3");
+  assert.equal(entry.online, false);
+  assert.equal(entry.capabilities.length, 3);
+
+  const submitted = await callMcp("task_submit", {
+    app_id: app.id, action: "browser_status",
+    args: {}, request_id: "local3-smoke-status"
+  });
+  assert.equal(submitted.structuredContent.state, "queued");
+  const leased = await (await request("/api/agent/" + app.id + "/poll",
+    { bearer: app.secret })).json();
+  assert.equal(leased.task.id, submitted.structuredContent.id);
+  const response = await request("/api/agent/" + app.id + "/result", {
+    method: "POST", bearer: app.secret,
+    body: { task_id: leased.task.id, result: { ok: true, connected: true } }
+  });
+  assert.equal(response.status, 200);
+  const readBack = await callMcp("task_get", { task_id: leased.task.id });
+  assert.equal(readBack.structuredContent.state, "completed");
+  assert.deepEqual(readBack.structuredContent.result, { ok: true, connected: true });
+  const after = await callMcp("apps_list");
+  assert.equal(after.structuredContent.apps[0].online, true);
+
+  const mutation = await callMcp("task_submit", {
+    app_id: app.id, action: "files_move",
+    args: { path: "scratch/check.txt", destination: "scratch/check2.txt" },
+    request_id: "local3-smoke-move"
+  });
+  assert.equal(mutation.structuredContent.state, "pending_approval");
+  const noCommand = await (await request("/api/agent/" + app.id + "/poll",
+    { bearer: app.secret })).json();
+  assert.equal(noCommand.task, null, "Unapproved filesystem mutations must not reach Android");
+});
