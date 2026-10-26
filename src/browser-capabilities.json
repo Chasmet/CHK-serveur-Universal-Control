@@ -294,5 +294,41 @@
   {
     "name": "desktop",
     "readOnly": false
+  },
+  {
+    "name": "browser_upload_status",
+    "readOnly": true
+  },
+  {
+    "name": "browser_get_page_status",
+    "readOnly": true
+  },
+  {
+    "name": "browser_verify_fields",
+    "readOnly": true
+  },
+  {
+    "name": "workflow_status",
+    "readOnly": true
+  },
+  {
+    "name": "browser_upload_file",
+    "readOnly": false
+  },
+  {
+    "name": "browser_fill_fields",
+    "readOnly": false
+  },
+  {
+    "name": "workflow_run",
+    "readOnly": false
+  },
+  {
+    "name": "workflow_resume",
+    "readOnly": false
+  },
+  {
+    "name": "workflow_cancel",
+    "readOnly": false
   }
 ]

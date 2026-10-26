@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { permissionView, connectorPermission } from "./autonomy.mjs";
+import { browserRoutes, browserTools } from "./browser-tools.mjs";
 import { SERVER_VERSION } from "./version.mjs";
 import { cryptoTools } from "./crypto.mjs";
 import { cryptoDeviceTools } from "./crypto-device-tools.mjs";
@@ -7,6 +10,11 @@ import { monitorTools } from "./crypto-monitor.mjs";
 
 const pagination = { offset: {type:"integer",minimum:0}, limit:{type:"integer",minimum:1,maximum:100}, query:{type:"string"}, include_capabilities:{type:"boolean"} };
 const tools = [
+  ...browserTools,
+  {name:"permissions_list",description:"Liste les autorisations persistantes Local 3 de cette connexion, leur origine Android et les commandes automatiques.",inputSchema:{type:"object",properties:{}},readOnlyHint:true},
+  {name:"permissions_grant",description:"Active les autorisations persistantes de cette connexion pour CHK Browser, dans le périmètre déjà autorisé sur Android. actions omis/null = tous les outils CHK enregistrés. Ne peut pas activer le mode autonome Android à distance.",inputSchema:{type:"object",properties:{app_id:{type:"string"},actions:{type:["array","null"],items:{type:"string"}},resume_pending:{type:"boolean",description:"Libérer aussi les anciennes commandes en attente de cette connexion ; false par défaut."}}}},
+  {name:"permissions_revoke",description:"Révoque les autorisations automatiques de cette connexion pour CHK Browser. Les tâches encore en attente repassent en validation.",inputSchema:{type:"object",properties:{app_id:{type:"string"}}}},
+  {name:"activity_list",description:"Journal paginé des commandes de cette connexion avec états réels et type d’autorisation. Aucun contenu de page ni secret.",inputSchema:{type:"object",properties:pagination},readOnlyHint:true},
   { name:"connector_identity",title:"Identité de cette connexion",description:"Identifiant d’autorisation unique de ce connecteur et applications autorisées. Les anciens jetons seront identifiés après leur prochain renouvellement OAuth.",inputSchema:{type:"object",properties:{}},readOnlyHint:true },
   { name: "godot_status", title: "Pirate Warrior 2 - état", description: "Vérifie la connexion à l’éditeur Godot réel sur le PC, sans prétendre qu’une tâche est terminée.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "godot_run", title: "Pirate Warrior 2 - commande", description: "Prépare une commande Godot, à approuver dans le panneau local avant son exécution réelle.", inputSchema: { type: "object", required: ["method"], properties: { method: { type: "string" }, params: { type: "object" }, request_id: { type: "string" } } } },
@@ -17,7 +25,7 @@ const tools = [
   { name: "app_invite", title: "Invitation application", description: "Génère une invitation unique de 15 minutes pour qu’une nouvelle application s’enregistre sans donner le mot de passe principal.", inputSchema: { type: "object", properties: {} } },
   { name: "task_submit", title: "Envoyer une commande", description: "Envoie une action vers une application enregistrée. Les actions d'écriture requièrent approbation explicite; l'état queued n'est pas completed.", inputSchema: { type: "object", required: ["action"], properties: { app_id: { type: "string" }, action: { type: "string" }, args: { type: "object" }, request_id: { type: "string" } } } },
   { name: "task_get", title: "Etat de tâche", description: "Lire le résultat réel ou l'état d'une tâche.", inputSchema: { type: "object", required: ["task_id"], properties: { task_id: { type: "string" } } }, readOnlyHint: true },
-  { name: "task_cancel", title: "Annuler commande", description: "Annule une tâche encore non exécutée.", inputSchema: { type: "object", required: ["task_id"], properties: { task_id: { type: "string" } } } },
+  { name: "task_cancel", title: "Annuler commande", description: "Annule une tâche encore non exécutée.", inputSchema: { type: "object", properties: { task_id: { type: "string" }, workflow_id:{type:"string"}, app_id:{type:"string"} },anyOf:[{required:["task_id"]},{required:["workflow_id"]}] } },
   { name: "ai_chat", title: "Assistant Qwen open source", description: "Pose une question au modèle local via Ollama et orchestre des outils disponibles. Modèle externe optionnel.", inputSchema: { type: "object", required: ["message"], properties: { message: { type: "string" } } } },
   { name: "crypto_capture", title: "Voir CHK Crypto", description: "Demande une capture JPEG de CHK Crypto, exclusivement si l'utilisateur a activé Accessibilité et vision. Retourne un task_id à suivre.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "crypto_inspect", title: "Lire les contrôles CHK Crypto", description: "Analyse les boutons et leurs positions sur l'écran CHK Crypto ouvert. Retourne task_id.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
@@ -57,7 +65,7 @@ function exposedTools() {
   }));
 }
 export function createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto, markets, advancedMarket, monitor) {
-  const writeTools = new Set(["app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "godot_run", "godot_batch", "crypto_chart_control", "crypto_monitor_config", "crypto_action"]);
+  const writeTools = new Set([...Object.keys(browserRoutes).filter(name=>browserRoutes[name].write),"permissions_grant","permissions_revoke","app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "godot_run", "godot_batch", "crypto_chart_control", "crypto_monitor_config", "crypto_action"]);
   return async function handle(rpc, req, res) {
     if (!rpc || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string" || Array.isArray(rpc)) {
       return security.json(res, 400, { jsonrpc: "2.0", id: rpc?.id ?? null, error: { code: -32600, message: "Invalid Request" } });
@@ -67,7 +75,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
     if (rpc.id === undefined) { res.writeHead(202); return res.end(); }
     const identity = security.identity(security.bearer(req));
     const allowedApps = identity?.app_ids ?? null;
-    const generic = new Set(["connector_identity","apps_list","server_status","task_submit","task_get","task_cancel"]);
+    const generic = new Set([...Object.keys(browserRoutes),"permissions_list","permissions_grant","permissions_revoke","activity_list","connector_identity","apps_list","server_status","task_submit","task_get","task_cancel"]);
     const canUseApp = id => allowedApps === null || allowedApps.includes(id);
     const canReadJob = job => job && canUseApp(job.app_id)
       && (!identity?.connector_id || !job.connector_id || job.connector_id === identity.connector_id);
@@ -85,14 +93,35 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
         const context = { source: actor, connector_id: identity?.connector_id || null };
         let output;
         const browserApp = () => store.listApps(false)
-          .filter(v => v.name === "CHK Agent Browser Android · Local 3")
+          .filter(v => v.name === "CHK Agent Browser Android · Local 3" && canUseApp(v.id))
           .sort((a,b) => Number(b.online) - Number(a.online) || Number(b.registered_at) - Number(a.registered_at))[0];
         const cryptoApp = () => store.listApps(false)
           .filter(v => v.name === "CHK Crypto Analyse 2"
             && v.capabilities?.some(c => c.name === "ui_status"))
           .sort((a,b) => Number(b.online) - Number(a.online)
             || Number(b.registered_at) - Number(a.registered_at))[0];
-        if (name === "connector_identity") output = identity;
+        const workflowId = id => {
+          if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,45}$/.test(id)) throw Error("invalid_workflow_id");
+          return identity?.connector_id ? "wf_"+createHash("sha256").update(identity.connector_id).digest("hex").slice(0,24)+"_"+id : id;
+        };
+        const pickBrowser = () => {
+          const app = a.app_id ? store.listApps(false).find(v => v.id === a.app_id && v.name === "CHK Agent Browser Android · Local 3") : browserApp();
+          if (!app || !canUseApp(app.id)) throw Error("browser_not_paired_or_not_allowed");
+          return app;
+        };
+        if (name === "permissions_list") output = permissionView(store, identity?.connector_id, allowedApps);
+        else if (name === "permissions_grant" || name === "permissions_revoke")
+          output = await connectorPermission(store, identity?.connector_id, pickBrowser().id, {enabled:name === "permissions_grant",actions:a.actions,resume_pending:a.resume_pending});
+        else if (name === "activity_list") {
+          const rows = Object.values(store.state.jobs).reverse().filter(canReadJob).map(job=>({id:job.id,name:job.action,app_id:job.app_id,connector_id:job.connector_id,state:job.state,authorization:job.authorization,created_at:job.created_at,updated_at:job.updated_at}));
+          const {items,...meta}=store.page(rows,a); output={activity:items,...meta};
+        }
+        else if (browserRoutes[name]) {
+          const app = pickBrowser(); const {app_id,request_id,...args}=a;
+          if(browserRoutes[name].action.startsWith("workflow_")) args.id=workflowId(args.id);
+          output=await store.submit({app_id:app.id,action:browserRoutes[name].action,args,request_id,...context});
+        }
+        else if (name === "connector_identity") output = identity;
         else if (name === "godot_status") output = await godot.status();
         else if (name === "godot_run" || name === "godot_batch") {
           if (name === "godot_run" && (typeof a.method !== "string" || a.method.length < 3 || a.method.length > 120)) throw Error("godot_invalid_method");
@@ -157,6 +186,9 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
         else if (name === "task_get") {
           const job = store.getJob(a.task_id);
           output = canReadJob(job) ? job : { error: "task_not_found" };
+        }
+        else if (name === "task_cancel" && a.workflow_id) {
+          output=await store.submit({app_id:pickBrowser().id,action:"workflow_cancel",args:{id:workflowId(a.workflow_id)},...context});
         }
         else if (name === "task_cancel") {
           if (!canReadJob(store.getJob(a.task_id))) throw Error("task_not_found");

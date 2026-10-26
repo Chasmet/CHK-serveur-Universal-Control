@@ -1,3 +1,4 @@
+import { deviceConsent, permissionView, connectorPermission } from "./autonomy.mjs";
 import { SERVER_VERSION } from "./version.mjs";
 import { createServer as httpServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -138,6 +139,8 @@ export async function buildServer(opts = {}) {
         const id = bits[3];
         const credential = security.bearer(req);
         if (!store.appAuthorized(id, credential)) return json(res, 401, { error: "app_auth_required" });
+        if (bits[4] === "permissions" && req.method === "PUT")
+          return json(res, 200, await deviceConsent(store, id, body));
         if (bits[4] === "capabilities" && req.method === "PUT")
           return json(res, 200, store.state.apps[id]?.name === "CHK Agent Browser Android · Local 3"
             ? await store.extendBrowserCapabilities(id, body)
@@ -156,6 +159,11 @@ export async function buildServer(opts = {}) {
       const pageOptions = () => ({ offset: Number(url.searchParams.get("offset") || 0),
         limit: Number(url.searchParams.get("limit") || 25), query: url.searchParams.get("query") || "" });
       if (req.method === "GET" && url.pathname === "/api/apps") return json(res, 200, store.appsPage(pageOptions(), null, Boolean(config.legacyUrl)));
+      if (req.method === "GET" && url.pathname === "/api/permissions") return json(res, 200, permissionView(store, null));
+      if (req.method === "GET" && url.pathname === "/api/activity") {
+        const { items, ...meta } = store.page(Object.values(store.state.jobs).reverse().map(j => ({ id:j.id, name:j.action, app_id:j.app_id, connector_id:j.connector_id, state:j.state, authorization:j.authorization, created_at:j.created_at, updated_at:j.updated_at })), pageOptions());
+        return json(res, 200, { activity:items, ...meta });
+      }
       if (req.method === "GET" && url.pathname === "/api/connectors") return json(res, 200, store.connectorsPage(pageOptions()));
       const connectorMatch = /^\/api\/connectors\/((?:chk|conn)_[a-f0-9]{36})$/.exec(url.pathname);
       if (connectorMatch && req.method === "PUT") return json(res, 200, await store.configureConnector(connectorMatch[1], body));

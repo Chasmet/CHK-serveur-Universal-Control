@@ -15,3 +15,15 @@ Outils : connector_identity, apps_list (offset, limit 1..100, query, include_cap
 L’URL MCP existante et les paramètres Tailscale sont conservés. Les limites de taille d’une requête, de taille d’une page et de travail en attente restent des protections opérationnelles ; elles ne limitent pas le nombre de connecteurs enregistrés.
 
 Les commandes spécialisées Crypto, les commandes visuelles et les tâches déléguées à Ollama conservent aussi le connector_id appelant. Les résultats des nouvelles tâches ne sont consultables que par leur connexion d’origine ou par le tableau de bord propriétaire.
+
+## Autonomie Local 3 (serveur 1.0.4 et APK compatible)
+
+L’autorisation persistante provient du mode autonome et de l’interrupteur Local 3 sur Android. Le téléphone la transmet via sa clé worker à PUT /api/agent/:id/permissions. Le serveur ne peut pas l’activer via un simple texte de page web. Une autorisation active met directement en file les commandes CHK connues, y compris navigation, clavier, fichiers, documents et Studio. Les anciennes commandes en attente ne sont pas exécutées lors de la mise à jour ; permissions_grant avec resume_pending:true permet de reprendre explicitement celles de la connexion courante. Aucun quota du nombre total de demandes ni plafond d’historique des tâches n’est appliqué.
+
+permissions_list indique le périmètre courant. permissions_revoke désactive les commandes automatiques pour la connexion courante ; permissions_grant réactive tout ou une liste d’actions, dans les droits déjà accordés sur le téléphone. La révocation locale est prioritaire sur toutes les connexions. Les commandes déjà exécutées ne sont pas annulées rétroactivement. Les autres applications et connecteurs conservent leurs politiques propres.
+
+Outils directs : browser_navigate, browser_click, browser_type, browser_tabs, browser_inspect, browser_screenshot, browser_upload_file, browser_upload_status, browser_page_status, browser_fill_fields, browser_verify_fields. Le serveur vérifie les capacités réellement enregistrées par l’APK ; aucun outil nouveau n’est simulé pour une ancienne version.
+
+task_run, task_status, task_resume et task_cancel(workflow_id) pilotent les workflows persistés sur Android. Chaque workflow a un identifiant propre à sa connexion ; les étapes incertaines sont vérifiées avant toute reprise. Les outils retournent d’abord une commande Android en attente : task_get permet de lire son résultat réel. activity_list et le tableau de bord donnent un journal paginé.
+
+La connexion Internet illimitée n’enlève pas les limites physiques du téléphone/PC ni celles des sites. Les paquets, pages et transferts restent bornés ; les gros résultats sont lus par blocs. Les imports web distinguent fichier sélectionné et téléversement réellement terminé. Les workflows peuvent piloter un site de génération, mais aucun accès API Grok ni moteur de synchronisation labiale n’est ajouté par ces outils.

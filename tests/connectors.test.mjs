@@ -183,3 +183,67 @@ test('specialized visual and Crypto commands retain connector ownership and sepa
  assert.equal(ctx.store.getJob(chart.task_id).state,'pending_approval');
  assert.equal((await ctx.rpc(ctx.owner,'task_get',{task_id:portfolio.task_id})).body.result.structuredContent.id,portfolio.task_id);
 });
+
+test('Local 3 persistent Android consent removes repeated approvals, survives reload, and revokes queued effects',async t=>{
+ const ctx=await setup(t);
+ const caps=JSON.parse(await (await import('node:fs/promises')).readFile(new URL('../src/browser-capabilities.json',import.meta.url),'utf8'));
+ const app=await ctx.store.registerApp({name:'CHK Agent Browser Android · Local 3',capabilities:caps});
+ const generic=await ctx.store.registerApp({name:'Other app',capabilities:[{name:'write',readOnly:false}]});
+ const a=await oauth(ctx,'Local 3');const b=await oauth(ctx,'Other Browser connector');
+ const send=(token,name,args)=>ctx.rpc(token,name,{app_id:app.id,...args});
+ const before=(await send(a.access_token,'browser_navigate',{url:'https://example.org',request_id:'navigation'})).body.result.structuredContent;
+ assert.equal(before.state,'pending_approval');
+ assert.equal((await send(a.access_token,'permissions_grant',{})).body.result.structuredContent.error,'device_authorization_required');
+ const route='/api/agent/'+app.id+'/permissions';
+ assert.equal((await ctx.req(route,{method:'PUT',token:a.access_token,body:{enabled:true}})).status,401);
+ assert.equal((await ctx.req('/api/agent/'+generic.id+'/permissions',{method:'PUT',token:generic.secret,body:{enabled:true}})).status,400);
+ assert.equal((await ctx.req(route,{method:'PUT',token:app.secret,body:{enabled:true,version:'test'}})).status,200);
+ assert.equal(ctx.store.getJob(before.id).state,'pending_approval'); // Do not execute a stale request just because the APK was upgraded.
+ await send(a.access_token,'permissions_grant',{resume_pending:true});
+ assert.equal(ctx.store.getJob(before.id).state,'queued');assert.equal(ctx.store.getJob(before.id).authorization,'persistent');
+ const next=(await send(a.access_token,'browser_type',{selector:'#prompt',text:'A prompt'})).body.result.structuredContent;
+ assert.equal(next.state,'queued');assert.equal(next.authorization,'persistent');
+ assert.equal((await ctx.rpc(a.access_token,'task_submit',{app_id:generic.id,action:'write'})).body.result.structuredContent.state,'pending_approval');
+ let restored=await new Store(ctx.config.file).init();
+ const {permitted}=await import('../src/autonomy.mjs');
+ assert.equal(permitted(restored.state,restored.state.apps[app.id],'browser_type',a.connector_id),true);
+ await send(a.access_token,'permissions_revoke',{});
+ assert.equal(ctx.store.getJob(before.id).state,'pending_approval');assert.equal(ctx.store.getJob(next.id).state,'pending_approval');
+ assert.equal((await send(b.access_token,'browser_navigate',{url:'https://example.org'})).body.result.structuredContent.state,'queued');
+ await send(a.access_token,'permissions_grant',{actions:['browser_open_url'],resume_pending:true});
+ assert.equal(ctx.store.getJob(before.id).state,'queued');assert.equal(ctx.store.getJob(next.id).state,'pending_approval');
+ const perms=(await ctx.rpc(a.access_token,'permissions_list')).body.result.structuredContent;
+ assert.deepEqual(perms.permissions[0].automatic_actions,['browser_open_url']);assert.equal(perms.request_quota,null);
+ await ctx.req(route,{method:'PUT',token:app.secret,body:{enabled:false}});
+ assert.equal(ctx.store.getJob(before.id).state,'pending_approval');
+ const after=(await send(b.access_token,'browser_navigate',{url:'https://example.org'})).body.result.structuredContent;
+ assert.equal(after.state,'pending_approval');
+ restored=await new Store(ctx.config.file).init();assert.equal(restored.state.apps[app.id].autonomy.enabled,false);
+ const log=(await ctx.rpc(a.access_token,'activity_list',{limit:2})).body.result.structuredContent;
+ assert.equal(log.activity.length,2);assert.ok(log.next_offset);assert.ok(log.activity.every(j=>j.connector_id===a.connector_id&&!('args' in j)));
+});
+
+test('Local 3 upload and durable workflow tools route to real registered Android handlers and preserve job truth',async t=>{
+ const ctx=await setup(t);const caps=JSON.parse(await (await import('node:fs/promises')).readFile(new URL('../src/browser-capabilities.json',import.meta.url),'utf8'));
+ const app=await ctx.store.registerApp({name:'CHK Agent Browser Android · Local 3',capabilities:caps});const a=await oauth(ctx,'Browser');
+ await ctx.req('/api/agent/'+app.id+'/permissions',{method:'PUT',token:app.secret,body:{enabled:true}});
+ await ctx.req('/api/connectors/'+a.connector_id,{token:ctx.owner,method:'PUT',body:{app_ids:[app.id]}});
+ const tools=(await ctx.rpc(a.access_token,'',{},'tools/list')).body.result.tools.map(t=>t.name);
+ for(const name of ['permissions_list','permissions_grant','permissions_revoke','browser_navigate','browser_upload_file','browser_screenshot','task_run','task_status','task_resume','activity_list'])assert.ok(tools.includes(name),name);
+ const upload=(await ctx.rpc(a.access_token,'browser_upload_file',{id:'upload-1',expected_host:'grok.com',selector:'input[type=file]',files:[{workspace_path:'image.png'}]})).body.result.structuredContent;
+ assert.equal(upload.action,'browser_upload_file');assert.equal(upload.state,'queued');assert.equal(upload.result,null);
+ const run=(await ctx.rpc(a.access_token,'task_run',{id:'cuts',steps:[{id:'inspect',action:'read_page',args:{}}]})).body.result.structuredContent;
+ assert.equal(run.action,'workflow_run');assert.equal(run.state,'queued');
+ const b=await oauth(ctx,'Other workflow connection',a);
+ const other=(await ctx.rpc(b.access_token,'task_run',{id:'cuts',steps:[{id:'inspect',action:'read_page',args:{}}]})).body.result.structuredContent;
+ assert.notEqual(run.args.id,other.args.id);
+ const resumed=(await ctx.rpc(a.access_token,'task_resume',{id:'cuts'})).body.result.structuredContent;assert.equal(resumed.args.id,run.args.id);
+ assert.equal((await ctx.rpc(a.access_token,'task_status',{id:'cuts'})).body.result.structuredContent.action,'workflow_status');
+ assert.equal((await ctx.rpc(a.access_token,'task_resume',{id:'cuts'})).body.result.structuredContent.action,'workflow_resume');
+ assert.equal((await ctx.rpc(a.access_token,'task_cancel',{workflow_id:'cuts'})).body.result.structuredContent.action,'workflow_cancel');
+ const first=await ctx.store.poll(app.id);assert.equal(first.id,upload.id);
+ const restored=await new Store(ctx.config.file).init();assert.equal(restored.getJob(first.id).state,'unknown');
+ const recovered=await restored.result(app.id,first.id,{ok:false,execution_state:'unknown',retry_command:false});
+ assert.equal(recovered.state,'failed');assert.equal(recovered.result.retry_command,false);
+ const polled=await restored.poll(app.id);assert.notEqual(polled.id,first.id);
+});

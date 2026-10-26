@@ -127,3 +127,9 @@ $("connectors").onclick=()=>{$("connectorpanel").hidden=false;loadConnectors();}
 $("connectorsearch").onclick=()=>loadConnectors();
 $("connectorprev").onclick=()=>loadConnectors(Math.max(0,connectorOffset-25));
 $("connectornext").onclick=()=>{if(connectorNext!==null)loadConnectors(connectorNext);};
+
+$("permissions").onclick=async()=>{try{line("Autorisations persistantes Android",await request('/api/permissions'));}catch(e){notice(e.message);}};
+$("activity").onclick=async()=>{try{
+  const page=await request('/api/activity');line("Journal d’activité",page);
+  if(page.next_offset!==null){let offset=page.next_offset;const more=node('button','Activités suivantes');more.onclick=async()=>{try{const p=await request('/api/activity?offset='+offset);line('Journal d’activité',p);offset=p.next_offset;more.disabled=offset===null;}catch(e){notice(e.message);}};$("messages").append(more);}
+}catch(e){notice(e.message);}};

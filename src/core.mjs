@@ -1,3 +1,4 @@
+import { permitted } from "./autonomy.mjs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -111,7 +112,7 @@ export class Store {
     const name = clean(input.name, 80);
     if (!name) throw Error("app_name_required");
     const capabilities = input.capabilities;
-    if (!Array.isArray(capabilities) || capabilities.length > 80 || capabilities.some(c => !c || typeof c.name !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(c.name) || typeof c.readOnly !== "boolean")) {
+    if (!Array.isArray(capabilities) || capabilities.some(c => !c || typeof c.name !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(c.name) || typeof c.readOnly !== "boolean")) {
       throw Error("invalid_capabilities");
     }
     const secret = "chkapp_" + randomBytes(32).toString("base64url");
@@ -133,7 +134,7 @@ export class Store {
   async joinApp(input) {
     const name = clean(input.name, 80);
     const capabilities = input.capabilities;
-    if (!name || !Array.isArray(capabilities) || capabilities.length > 80 ||
+    if (!name || !Array.isArray(capabilities) ||
         capabilities.some(c => !c || typeof c.name !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(c.name) || typeof c.readOnly !== "boolean")) throw Error("invalid_registration");
     const secret = "chkapp_" + randomBytes(32).toString("base64url");
     const app = { id: uid(), name, capabilities: capabilities.map(c => ({ name: c.name, readOnly: c.readOnly, description: clean(c.description, 150) })), secret_hash: hash(secret), registered_at: now(), last_seen: null };
@@ -147,7 +148,7 @@ export class Store {
   }
   async extendCapabilities(id, input) {
     const source = input?.capabilities;
-    if (!Array.isArray(source) || source.length > 80
+    if (!Array.isArray(source)
         || new Set(source.map(c => c?.name)).size !== source.length
         || source.some(c => !c || typeof c.name !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(c.name)
           || typeof c.readOnly !== "boolean")) throw Error("invalid_capabilities");
@@ -159,7 +160,6 @@ export class Store {
       for (const c of source) if (existing.has(c.name) && existing.get(c.name).readOnly !== c.readOnly)
         throw Error("invalid_capability_policy");
       for (const c of source) existing.set(c.name, {name:c.name,readOnly:c.readOnly,description:clean(c.description,150)});
-      if(existing.size>80) throw Error("capability_limit");
       app.capabilities=[...existing.values()];count=app.capabilities.length;
     });
     return {ok:true,id,capability_count:count};
@@ -181,7 +181,6 @@ export class Store {
       for (const c of source) existing.set(c.name, {
         name: c.name, readOnly: c.readOnly, description: clean(c.description, 150)
       });
-      if (existing.size > 80) throw Error("capability_limit");
       app.capabilities = [...existing.values()];
       updated = { ok: true, id: app.id, capability_count: app.capabilities.length };
     });
@@ -190,7 +189,7 @@ export class Store {
   async extendBrowserCapabilities(id, input) {
     const expected = new Map(browserCapabilities.map(c => [c.name, c.readOnly]));
     const source = input?.capabilities;
-    if (!Array.isArray(source) || source.length !== expected.size
+    if (!Array.isArray(source) || source.length === 0
         || new Set(source.map(c => c?.name)).size !== expected.size
         || source.some(c => !c || !expected.has(c.name) || c.readOnly !== expected.get(c.name)))
       throw Error("invalid_browser_capabilities");
@@ -206,7 +205,6 @@ export class Store {
       for (const c of source) existing.set(c.name, {
         name: c.name, readOnly: c.readOnly, description: clean(c.description, 150)
       });
-      if (existing.size > 80) throw Error("capability_limit");
       app.capabilities = [...existing.values()];
       const d = input.diagnostic || {};
       app.diagnostic = {
@@ -238,15 +236,15 @@ export class Store {
           return;
         }
       }
-      if (Object.keys(s.jobs).length >= 100000) throw Error("job_limit");
       // The Android owner opts into this restricted CHK-only accessibility session.
       // The APK enforces the on-device switch and rejects orders/secret fields.
       // Other app actions and all trading capabilities still require approval.
       const delegatedVisual = app?.name === "CHK Crypto Analyse 2"
         && /^ui_(?:click|tap|long_press|swipe|type|back)$/.test(action)
         && capability?.readOnly === false;
-      const approval = !capability?.readOnly && !delegatedVisual;
-      const task = { id: uid(), app_id, action, args, request_id: rid, source, connector_id, state: approval ? "pending_approval" : "queued", created_at: now(), updated_at: now(), attempts: 0, result: null };
+      const delegatedBrowser = !capability?.readOnly && permitted(s, app, action, connector_id);
+      const approval = !capability?.readOnly && !delegatedVisual && !delegatedBrowser;
+      const task = { id: uid(), app_id, action, args, request_id: rid, source, connector_id, authorization: delegatedBrowser ? "persistent" : capability?.readOnly ? "read_only" : "per_task", state: approval ? "pending_approval" : "queued", created_at: now(), updated_at: now(), attempts: 0, result: null };
       s.jobs[task.id] = task;
       result = task;
     });
@@ -254,7 +252,7 @@ export class Store {
   }
   publicJob(job) {
     if (!job || !jobStates.has(job.state)) return null;
-    return { id: job.id, app_id: job.app_id, connector_id: job.connector_id || null, action: job.action, args: job.args, state: job.state, created_at: job.created_at, updated_at: job.updated_at, result: job.result, request_id: job.request_id };
+    return { id: job.id, app_id: job.app_id, connector_id: job.connector_id || null, action: job.action, args: job.args, state: job.state, created_at: job.created_at, updated_at: job.updated_at, result: job.result, authorization: job.authorization || "per_task", request_id: job.request_id };
   }
   getJob(id) { return this.publicJob(this.state.jobs[id]); }
   listJobs() { return Object.values(this.state.jobs).sort((a,b) => b.created_at-a.created_at).slice(0,100).map(job => this.publicJob(job)); }
@@ -284,7 +282,13 @@ export class Store {
       const app = s.apps[appId];
       if (!app || app.system) throw Error("unknown_app");
       app.last_seen = now();
-      const job = Object.values(s.jobs).find(j => j.app_id === appId && j.state === "queued");
+      const job = Object.values(s.jobs).find(j => {
+        if (j.app_id !== appId || j.state !== "queued") return false;
+        if (j.authorization === "persistent" && !permitted(s, app, j.action, j.connector_id)) {
+          j.state = "pending_approval"; j.updated_at = now(); return false;
+        }
+        return true;
+      });
       if (job) {
         job.state = "leased";
         job.attempts += 1;
@@ -301,7 +305,7 @@ export class Store {
       if (!job || job.app_id !== appId) throw Error("invalid_job_result");
       if (["completed", "failed"].includes(job.state)
           && JSON.stringify(job.result) === JSON.stringify(payload)) return;
-      if (job.state !== "leased") throw Error("invalid_job_result");
+      if (!["leased", "unknown"].includes(job.state)) throw Error("invalid_job_result");
       if (Buffer.byteLength(JSON.stringify(payload), "utf8") > MAX_RESULT) throw Error("result_too_large");
       job.result = payload;
       job.state = payload?.ok === false ? "failed" : "completed";
