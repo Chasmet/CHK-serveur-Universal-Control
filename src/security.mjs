@@ -27,9 +27,10 @@ export function createSecurity(config, store) {
         || (config.allowLocalOAuth && u.protocol === "http:" && ["127.0.0.1", "localhost"].includes(u.hostname) && !u.pathname.includes(".."));
     } catch { return false; }
   };
-  const token = (sub = "owner", requestedScope = scope, clientId = null) => {
+  const token = (sub = "owner", requestedScope = scope, clientId = null, connectorId = null) => {
     const payload = { sub, aud: resource, iss: issuer, iat: Math.floor(now() / 1000), exp: Math.floor(now() / 1000) + 3600, scope: requestedScope };
     if (clientId) payload.client_id = clientId;
+    if (connectorId) payload.connector_id = connectorId;
     const unsigned = enc({ typ: "JWT", alg: "HS256" }) + "." + enc(payload);
     return unsigned + "." + sign(unsigned, config.jwtSecret);
   };
@@ -44,6 +45,8 @@ export function createSecurity(config, store) {
       const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString());
       return header.alg === "HS256" && claims.iss === issuer && claims.aud === resource && claims.sub === "owner" &&
         (!claims.client_id || (store.state.clients[claims.client_id] && store.state.clients[claims.client_id].enabled !== false)) &&
+        (!claims.connector_id || (store.state.connectors[claims.connector_id]?.client_id === claims.client_id
+          && store.state.connectors[claims.connector_id].enabled !== false)) &&
         claims.exp > Math.floor(now() / 1000) && claims.iat <= Math.floor(now() / 1000) &&
         typeof claims.scope === "string" && claims.scope.split(" ").includes(needed);
     } catch { return false; }
@@ -147,21 +150,29 @@ export function createSecurity(config, store) {
         const challenge = createHash("sha256").update(body.code_verifier).digest("base64url");
         if (!safeEqual(saved.challenge, challenge)) return json(res, 400, { error: "invalid_grant" });
         const refresh = "chkr_" + uid() + uid();
+        const connectorId = "conn_" + uid();
         await store.change(s => {
           delete s.codes[hash(body.code)];
-          s.refresh[hash(refresh)] = { clientId: saved.clientId, requestedScope: saved.requestedScope, expires: now() + 30 * 86400000 };
+          s.connectors[connectorId] = { client_id: saved.clientId,
+            client_name: s.clients[saved.clientId].client_name, enabled: true, app_ids: null, created_at: now() };
+          s.refresh[hash(refresh)] = { clientId: saved.clientId, connectorId, requestedScope: saved.requestedScope, expires: now() + 30 * 86400000 };
         });
-        return json(res, 200, { access_token: token("owner", saved.requestedScope, saved.clientId), token_type: "Bearer", expires_in: 3600, refresh_token: refresh, scope: saved.requestedScope });
+        return json(res, 200, { access_token: token("owner", saved.requestedScope, saved.clientId, connectorId), connector_id: connectorId, token_type: "Bearer", expires_in: 3600, refresh_token: refresh, scope: saved.requestedScope });
       }
       if (body.grant_type === "refresh_token") {
         const saved = store.state.refresh[hash(body.refresh_token || "")];
         if (!saved || saved.expires < now() || saved.clientId !== body.client_id || !store.state.clients[saved.clientId] || store.state.clients[saved.clientId].enabled === false || body.resource !== resource) return json(res, 400, { error: "invalid_grant" });
+        if (saved.connectorId && (!store.state.connectors[saved.connectorId]
+            || store.state.connectors[saved.connectorId].enabled === false)) return json(res, 400, { error: "invalid_grant" });
         const refresh = "chkr_" + uid() + uid();
+        const connectorId = saved.connectorId || "conn_" + uid();
         await store.change(s => {
           delete s.refresh[hash(body.refresh_token)];
-          s.refresh[hash(refresh)] = saved;
+          if (!s.connectors[connectorId]) s.connectors[connectorId] = {client_id:saved.clientId,
+            client_name:s.clients[saved.clientId].client_name,enabled:true,app_ids:null,created_at:now()};
+          s.refresh[hash(refresh)] = {...saved, connectorId};
         });
-        return json(res, 200, { access_token: token("owner", saved.requestedScope, saved.clientId), token_type: "Bearer", expires_in: 3600, refresh_token: refresh, scope: saved.requestedScope });
+        return json(res, 200, { access_token: token("owner", saved.requestedScope, saved.clientId, connectorId), connector_id: connectorId, token_type: "Bearer", expires_in: 3600, refresh_token: refresh, scope: saved.requestedScope });
       }
       return json(res, 400, { error: "unsupported_grant_type" });
     }
@@ -170,9 +181,10 @@ export function createSecurity(config, store) {
   function identity(jwt) {
     if (!verify(jwt)) return null;
     const claims = JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString());
-    const id = claims.client_id || null;
-    const client = id ? store.state.clients[id] : null;
-    return { client_id: id, identified: Boolean(id), name: client?.label || client?.client_name || "Connexion propriétaire historique",
+    const clientId = claims.client_id || null;
+    const id = claims.connector_id || clientId;
+    const client = claims.connector_id ? store.state.connectors[id] : clientId ? store.state.clients[clientId] : null;
+    return { connector_id: id, client_id: clientId, identified: Boolean(id), name: client?.label || client?.client_name || "Connexion propriétaire historique",
       app_ids: client?.app_ids ?? null, enabled: client?.enabled !== false };
   }
   return { route, token, verify, identity, bearer, unauthorized, json, resource };

@@ -157,7 +157,7 @@ export async function buildServer(opts = {}) {
         limit: Number(url.searchParams.get("limit") || 25), query: url.searchParams.get("query") || "" });
       if (req.method === "GET" && url.pathname === "/api/apps") return json(res, 200, store.appsPage(pageOptions(), null, Boolean(config.legacyUrl)));
       if (req.method === "GET" && url.pathname === "/api/connectors") return json(res, 200, store.connectorsPage(pageOptions()));
-      const connectorMatch = /^\/api\/connectors\/(chk_[a-f0-9]{36})$/.exec(url.pathname);
+      const connectorMatch = /^\/api\/connectors\/((?:chk|conn)_[a-f0-9]{36})$/.exec(url.pathname);
       if (connectorMatch && req.method === "PUT") return json(res, 200, await store.configureConnector(connectorMatch[1], body));
       if (req.method === "POST" && url.pathname === "/api/apps") return json(res, 201, await store.registerApp(body));
       if (req.method === "POST" && url.pathname === "/api/invites") return json(res, 201, await store.createInvite());

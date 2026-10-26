@@ -1,6 +1,6 @@
 Gestion de plusieurs connecteurs sans plafond logiciel sur leur nombre total.
 
-- Identifiant OAuth unique conservé dans chaque nouveau jeton, également lors de son renouvellement.
+- Identifiant de connexion unique pour chaque autorisation OAuth, conservé dans chaque nouveau jeton, également lors de son renouvellement.
 - Registres des connecteurs et applications sans maximum de 100 ou 20 000 entrées.
 - Outil connector_identity : identité et applications autorisées de la connexion courante.
 - Tableau de bord local : rechercher, renommer, activer/désactiver et associer les connecteurs aux applications.

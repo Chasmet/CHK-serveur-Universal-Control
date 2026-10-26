@@ -7,7 +7,7 @@ import { monitorTools } from "./crypto-monitor.mjs";
 
 const pagination = { offset: {type:"integer",minimum:0}, limit:{type:"integer",minimum:1,maximum:100}, query:{type:"string"}, include_capabilities:{type:"boolean"} };
 const tools = [
-  { name:"connector_identity",title:"Identité de cette connexion",description:"Identifiant OAuth unique de ce connecteur et applications autorisées. Les anciens jetons seront identifiés après leur prochain renouvellement OAuth.",inputSchema:{type:"object",properties:{}},readOnlyHint:true },
+  { name:"connector_identity",title:"Identité de cette connexion",description:"Identifiant d’autorisation unique de ce connecteur et applications autorisées. Les anciens jetons seront identifiés après leur prochain renouvellement OAuth.",inputSchema:{type:"object",properties:{}},readOnlyHint:true },
   { name: "godot_status", title: "Pirate Warrior 2 - état", description: "Vérifie la connexion à l’éditeur Godot réel sur le PC, sans prétendre qu’une tâche est terminée.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "godot_run", title: "Pirate Warrior 2 - commande", description: "Prépare une commande Godot, à approuver dans le panneau local avant son exécution réelle.", inputSchema: { type: "object", required: ["method"], properties: { method: { type: "string" }, params: { type: "object" }, request_id: { type: "string" } } } },
   { name: "godot_batch", title: "Pirate Warrior 2 - commandes groupées", description: "Prépare 1 à 12 commandes Godot, à approuver avant exécution.", inputSchema: { type: "object", required: ["commands"], properties: { commands: { type: "array", minItems: 1, maxItems: 12, items: { type: "object", required: ["method"], properties: { method: { type: "string" }, params: { type: "object" } } } }, request_id: { type: "string" } } } },
@@ -70,7 +70,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
     const generic = new Set(["connector_identity","apps_list","server_status","task_submit","task_get","task_cancel"]);
     const canUseApp = id => allowedApps === null || allowedApps.includes(id);
     const canReadJob = job => job && canUseApp(job.app_id)
-      && (!identity?.client_id || !job.connector_id || job.connector_id === identity.client_id);
+      && (!identity?.connector_id || !job.connector_id || job.connector_id === identity.connector_id);
     let result;
     try {
       if (rpc.method === "initialize") {
@@ -81,7 +81,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
         const name = rpc.params?.name;
         const a = rpc.params?.arguments || {};
         if (allowedApps !== null && !generic.has(name)) throw Error("connector_tool_not_allowed");
-        const actor = identity?.client_id ? "mcp:" + identity.client_id : "mcp";
+        const actor = identity?.connector_id ? "mcp:" + identity.connector_id : "mcp";
         let output;
         const browserApp = () => store.listApps(false)
           .filter(v => v.name === "CHK Agent Browser Android · Local 3")
@@ -97,7 +97,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
           if (name === "godot_run" && (typeof a.method !== "string" || a.method.length < 3 || a.method.length > 120)) throw Error("godot_invalid_method");
           if (name === "godot_batch" && (!Array.isArray(a.commands) || a.commands.length < 1 || a.commands.length > 12)) throw Error("godot_invalid_batch");
           const { request_id, ...args } = a;
-          output = await store.submit({ app_id: "godot-local", action: name, args, source: actor, connector_id: identity?.client_id, request_id });
+          output = await store.submit({ app_id: "godot-local", action: name, args, source: actor, connector_id: identity?.connector_id, request_id });
         }
         else if (name === "crypto_capture" || name === "crypto_inspect" || name === "crypto_action") {
           const app = cryptoApp();
@@ -114,7 +114,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
           output = store.getJob(a.task_id) || { error: "task_not_found" };
         }
         else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: allowedApps === null ? Object.keys(store.state.apps).length + Number(Boolean(config.legacyUrl)) : allowedApps.length,
-          connectors: Object.keys(store.state.clients).length, registry_limit: null, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl), version: SERVER_VERSION, browser_protocol: 2, browser_connected: Boolean(browserApp()?.online) };
+          connectors: Object.keys(store.state.connectors).length, oauth_clients: Object.keys(store.state.clients).length, registry_limit: null, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl), version: SERVER_VERSION, browser_protocol: 2, browser_connected: Boolean(browserApp()?.online) };
         else if (name === "apps_list") output = store.appsPage(a, allowedApps, Boolean(config.legacyUrl));
         else if (name === "crypto_ticker") output = await markets.ticker(a);
         else if (name === "crypto_orderbook") output = await markets.orderbook(a);
@@ -150,7 +150,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
           const app_id = a.app_id || (allowedApps?.length === 1 ? allowedApps[0] : null);
           if (!app_id) throw Error("app_id_required_choose_from_apps_list");
           if (!canUseApp(app_id)) throw Error("connector_app_not_allowed");
-          output = await store.submit({ ...a, app_id, source: actor, connector_id: identity?.client_id, legacy: Boolean(config.legacyUrl) });
+          output = await store.submit({ ...a, app_id, source: actor, connector_id: identity?.connector_id, legacy: Boolean(config.legacyUrl) });
         }
         else if (name === "task_get") {
           const job = store.getJob(a.task_id);

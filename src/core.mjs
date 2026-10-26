@@ -20,7 +20,7 @@ const MAX_RESULT = 350000;
 export class Store {
   constructor(file) {
     this.file = file;
-    this.state = { apps: {}, jobs: {}, clients: {}, codes: {}, refresh: {}, invites: {}, version: 1 };
+    this.state = { apps: {}, jobs: {}, clients: {}, connectors: {}, codes: {}, refresh: {}, invites: {}, version: 1 };
     this.lock = Promise.resolve();
   }
   async init() {
@@ -87,24 +87,24 @@ export class Store {
       next_offset: offset + limit < filtered.length ? offset + limit : null };
   }
   connectorsPage(options = {}) {
-    const rows = Object.entries(this.state.clients).map(([id, c]) => ({ id, name: c.label || c.client_name,
+    const rows = Object.entries(this.state.connectors).map(([id, c]) => ({ id, client_id: c.client_id, name: c.label || c.client_name,
       enabled: c.enabled !== false, app_ids: c.app_ids ?? null, created_at: c.created_at }));
     const { items, ...meta } = this.page(rows, options);
     return { connectors: items, ...meta, max_registered: null };
   }
   async configureConnector(id, input) {
-    const client = this.state.clients[id];
+    const client = this.state.connectors[id] || this.state.clients[id];
     if (!client) throw Error("unknown_connector");
     if (input.enabled !== undefined && typeof input.enabled !== "boolean") throw Error("invalid_connector_config");
     if (input.app_ids !== undefined && input.app_ids !== null && (!Array.isArray(input.app_ids) || input.app_ids.length > 100
         || input.app_ids.some(id => typeof id !== "string" || !this.state.apps[id]))) throw Error("invalid_connector_apps");
     await this.change(state => {
-      const c = state.clients[id];
+      const c = state.connectors[id] || state.clients[id];
       if (input.name !== undefined) c.label = clean(input.name, 80);
       if (input.enabled !== undefined) c.enabled = input.enabled;
       if (input.app_ids !== undefined) c.app_ids = input.app_ids === null ? null : [...new Set(input.app_ids)];
     });
-    const c = this.state.clients[id];
+    const c = this.state.connectors[id] || this.state.clients[id];
     return { id, name: c.label || c.client_name, enabled: c.enabled !== false, app_ids: c.app_ids ?? null };
   }
   async registerApp(input) {
