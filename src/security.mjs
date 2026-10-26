@@ -154,7 +154,7 @@ export function createSecurity(config, store) {
         await store.change(s => {
           delete s.codes[hash(body.code)];
           s.connectors[connectorId] = { client_id: saved.clientId,
-            client_name: s.clients[saved.clientId].client_name, enabled: true, app_ids: null, created_at: now() };
+            client_name: s.clients[saved.clientId].client_name, enabled: true, app_ids: s.clients[saved.clientId].app_ids?.slice() ?? null, created_at: now() };
           s.refresh[hash(refresh)] = { clientId: saved.clientId, connectorId, requestedScope: saved.requestedScope, expires: now() + 30 * 86400000 };
         });
         return json(res, 200, { access_token: token("owner", saved.requestedScope, saved.clientId, connectorId), connector_id: connectorId, token_type: "Bearer", expires_in: 3600, refresh_token: refresh, scope: saved.requestedScope });
@@ -169,7 +169,7 @@ export function createSecurity(config, store) {
         await store.change(s => {
           delete s.refresh[hash(body.refresh_token)];
           if (!s.connectors[connectorId]) s.connectors[connectorId] = {client_id:saved.clientId,
-            client_name:s.clients[saved.clientId].client_name,enabled:true,app_ids:null,created_at:now()};
+            client_name:s.clients[saved.clientId].client_name,enabled:true,app_ids:s.clients[saved.clientId].app_ids?.slice() ?? null,created_at:now()};
           s.refresh[hash(refresh)] = {...saved, connectorId};
         });
         return json(res, 200, { access_token: token("owner", saved.requestedScope, saved.clientId, connectorId), connector_id: connectorId, token_type: "Bearer", expires_in: 3600, refresh_token: refresh, scope: saved.requestedScope });
@@ -184,8 +184,11 @@ export function createSecurity(config, store) {
     const clientId = claims.client_id || null;
     const id = claims.connector_id || clientId;
     const client = claims.connector_id ? store.state.connectors[id] : clientId ? store.state.clients[clientId] : null;
+    const clientApps = store.state.clients[clientId]?.app_ids ?? null;
+    const connectionApps = client?.app_ids ?? null;
+    const appIds = connectionApps === null ? clientApps : clientApps === null ? connectionApps : connectionApps.filter(id => clientApps.includes(id));
     return { connector_id: id, client_id: clientId, identified: Boolean(id), name: client?.label || client?.client_name || "Connexion propriétaire historique",
-      app_ids: client?.app_ids ?? null, enabled: client?.enabled !== false };
+      app_ids: appIds, enabled: client?.enabled !== false };
   }
   return { route, token, verify, identity, bearer, unauthorized, json, resource };
 }

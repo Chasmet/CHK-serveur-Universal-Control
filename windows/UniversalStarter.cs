@@ -49,7 +49,7 @@ namespace CHKUniversalControl
 
     sealed class MainPanel : Form
     {
-        const string Version = "1.0.2";
+        const string Version = "1.0.3";
         static readonly string Root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CHKUniversalControl");
         static readonly string Runtime = Path.Combine(Root, "runtime-v" + Version);
@@ -596,7 +596,7 @@ namespace CHKUniversalControl
                         throw new Exception("Missing required files in packaged Windows executable");
                 }
             }
-            if(Version!="1.0.2")throw new Exception("Incorrect Windows launcher version");
+            if(Version!="1.0.3")throw new Exception("Incorrect Windows launcher version");
             // Regression for the user's screenshot: Process.HasExited throws when
             // Process.Start was denied and no native process is associated.
             using(var neverStarted = new Process()) {

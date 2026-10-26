@@ -81,15 +81,15 @@ export function createCryptoModule(store,{base=ENDPOINT,fetchImpl=globalThis.fet
       scanned_at:new Date(c.time).toISOString(),items:list.slice(offset,offset+limit),
       next_offset:offset+limit<list.length?offset+limit:null};
   }
-  async function dispatch(action,args={}) {
+  async function dispatch(action,args={},context={}) {
     const app=agent();
     if(!app)return {error:"crypto_android_not_registered",hint:"Ouvrir CHK Crypto > Connexion serveur universel puis saisir une invitation MCP."};
     if(!app.capabilities.some(c=>c.name===action&&c.readOnly===(action!=="crypto_chart_control")))return {error:"crypto_capability_missing",requested:action};
-    const task=await store.submit({app_id:app.id,action,args,source:"crypto-mcp"});
+    const task=await store.submit({app_id:app.id,action,args,source:context.source || "crypto-mcp",connector_id:context.connector_id || null});
     return {task_id:task.id,state:task.state,android_online:Boolean(app.last_seen&&now()-app.last_seen<90000),
       hint:"La réponse n'est disponible qu'après l'exécution sur Android. Utiliser crypto_task_result."};
   }
-  async function chartControl(args={}) {
+  async function chartControl(args={},context={}) {
     const action=String(args.action||"");
     const allowed=new Set(["set_symbol","set_timeframe","set_profile","set_indicators","zoom_in","zoom_out","pan_left","pan_right","go_to_latest","set_auto_scale"]);
     if(!allowed.has(action))throw Error("invalid_chart_action");
@@ -101,7 +101,7 @@ export function createCryptoModule(store,{base=ENDPOINT,fetchImpl=globalThis.fet
     if(action==="set_profile" && !["SCALP","INTRADAY","SWING"].includes(input.profile))throw Error("invalid_profile");
     if(["pan_left","pan_right"].includes(action)&&(!Number.isInteger(input.candles??20)||(input.candles??20)<1||(input.candles??20)>200))throw Error("invalid_pan");
     if(action==="set_indicators" && (typeof input.indicators!=="object"||!input.indicators||Array.isArray(input.indicators)))throw Error("invalid_indicator_config");
-    return dispatch("crypto_chart_control",{action,args:input});
+    return dispatch("crypto_chart_control",{action,args:input},context);
   }
   function result(args){
     const app=agent();

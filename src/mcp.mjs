@@ -82,6 +82,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
         const a = rpc.params?.arguments || {};
         if (allowedApps !== null && !generic.has(name)) throw Error("connector_tool_not_allowed");
         const actor = identity?.connector_id ? "mcp:" + identity.connector_id : "mcp";
+        const context = { source: actor, connector_id: identity?.connector_id || null };
         let output;
         const browserApp = () => store.listApps(false)
           .filter(v => v.name === "CHK Agent Browser Android · Local 3")
@@ -107,11 +108,12 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
               : name === "crypto_inspect" ? "ui_inspect" : a.action;
             if (!app.capabilities.some(c => c.name === action)) output = { error: "capability_not_registered" };
             else output = await store.submit({ app_id: app.id, action, args: name === "crypto_action" ? (a.args || {}) : {},
-              request_id: a.request_id || "", source:"mcp" });
+              request_id: a.request_id || "", ...context });
           }
         }
         else if (name === "crypto_result") {
-          output = store.getJob(a.task_id) || { error: "task_not_found" };
+          const job = store.getJob(a.task_id);
+          output = canReadJob(job) ? job : { error: "task_not_found" };
         }
         else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: allowedApps === null ? Object.keys(store.state.apps).length + Number(Boolean(config.legacyUrl)) : allowedApps.length,
           connectors: Object.keys(store.state.connectors).length, oauth_clients: Object.keys(store.state.clients).length, registry_limit: null, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl), version: SERVER_VERSION, browser_protocol: 2, browser_connected: Boolean(browserApp()?.online) };
@@ -127,15 +129,15 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
         else if (name === "crypto_status") output = crypto.status();
         else if (name === "crypto_scan_bybit") output = await crypto.scan(a);
         else if (name === "crypto_list_bybit") output = await crypto.page(a);
-        else if (name === "crypto_portfolio") output = await crypto.dispatch("crypto_portfolio");
-        else if (name === "crypto_tracking") output = await crypto.dispatch("crypto_tracking");
-        else if (name === "crypto_task_result") output = crypto.result(a);
-        else if (name === "crypto_alerts") output = await crypto.dispatch("crypto_alerts");
-        else if (name === "crypto_bot_status") output = await crypto.dispatch("crypto_bot_status");
-        else if (name === "crypto_app_status") output = await crypto.dispatch("crypto_app_status");
-        else if (name === "crypto_chart_state") output = await crypto.dispatch("crypto_chart_state");
-        else if (name === "crypto_device_status") output = await crypto.dispatch("crypto_device_status");
-        else if (name === "crypto_chart_control") output = await crypto.chartControl(a);
+        else if (name === "crypto_portfolio") output = await crypto.dispatch("crypto_portfolio", {}, context);
+        else if (name === "crypto_tracking") output = await crypto.dispatch("crypto_tracking", {}, context);
+        else if (name === "crypto_task_result") output = canReadJob(store.getJob(a.task_id)) ? crypto.result(a) : { error: "crypto_task_not_found" };
+        else if (name === "crypto_alerts") output = await crypto.dispatch("crypto_alerts", {}, context);
+        else if (name === "crypto_bot_status") output = await crypto.dispatch("crypto_bot_status", {}, context);
+        else if (name === "crypto_app_status") output = await crypto.dispatch("crypto_app_status", {}, context);
+        else if (name === "crypto_chart_state") output = await crypto.dispatch("crypto_chart_state", {}, context);
+        else if (name === "crypto_device_status") output = await crypto.dispatch("crypto_device_status", {}, context);
+        else if (name === "crypto_chart_control") output = await crypto.chartControl(a, context);
         else if (name === "crypto_market_chart") output = await advancedMarket.chart(a);
         else if (name === "crypto_recent_trades") output = await advancedMarket.trades(a);
         else if (name === "crypto_internet_news") output = await advancedMarket.news(a);
@@ -160,7 +162,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
           if (!canReadJob(store.getJob(a.task_id))) throw Error("task_not_found");
           output = await store.cancel(a.task_id);
         }
-        else if (name === "ai_chat") output = await ai.chat(a.message);
+        else if (name === "ai_chat") output = await ai.chat(a.message, context);
         else if (name === "chk_read") output = !["server_info", "android_status"].includes(a.name || "android_status") ? { error: "forbidden_read_tool" } : config.legacyUrl ? await legacyCall(a.name || "android_status", {}) : browserApp() ? { connection: "paired_worker", app: browserApp(), legacy_required: false } : { error: "browser_not_paired", legacy_required: false };
         else return security.json(res, 200, { jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "Unknown tool" } });
         if (name === "crypto_result" && output?.state === "completed"

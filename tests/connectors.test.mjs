@@ -134,3 +134,52 @@ test('new application types may add capabilities through their own authenticated
  assert.equal((await ctx.store.submit({app_id:app.id,action:'new_writer'})).state,'pending_approval');
  assert.equal((await ctx.req(route,{method:'PUT',token:app.secret,body:{capabilities:[{name:'edit',readOnly:true}]}})).status,400);
 });
+
+
+test('OAuth migration and new authorizations preserve client application restrictions',async t=>{
+ const ctx=await setup(t);
+ const app=await ctx.store.registerApp({name:'Allowed app',capabilities:[{name:'inspect',readOnly:true}]});
+ const other=await ctx.store.registerApp({name:'Other app',capabilities:[{name:'inspect',readOnly:true}]});
+ const first=await oauth(ctx,'Legacy restricted client');
+ await ctx.req('/api/connectors/'+first.client_id,{token:ctx.owner,method:'PUT',body:{app_ids:[app.id]}});
+ const fresh=await oauth(ctx,'Same client',first);
+ const identity=(await ctx.rpc(fresh.access_token,'connector_identity')).body.result.structuredContent;
+ assert.deepEqual(identity.app_ids,[app.id]);
+ // Old refresh grants had no connectorId before version 1.0.2.
+ const legacyRefresh='legacy-refresh-for-migration';
+ await ctx.store.change(s=>{s.refresh[hash(legacyRefresh)]={clientId:first.client_id,requestedScope:'mcp:read mcp:write',expires:Date.now()+60000};});
+ const migrated=await (await ctx.req('/oauth/token',{body:{grant_type:'refresh_token',client_id:first.client_id,refresh_token:legacyRefresh,resource:ctx.config.base+'/mcp'}})).json();
+ assert.ok(migrated.connector_id);
+ assert.deepEqual((await ctx.rpc(migrated.access_token,'apps_list')).body.result.structuredContent.apps.map(a=>a.id),[app.id]);
+ assert.equal((await ctx.rpc(migrated.access_token,'task_submit',{app_id:other.id,action:'inspect'})).body.result.isError,true);
+ // A connection cannot enlarge its OAuth client's allowed applications.
+ await ctx.req('/api/connectors/'+fresh.connector_id,{token:ctx.owner,method:'PUT',body:{app_ids:null}});
+ assert.deepEqual((await ctx.rpc(fresh.access_token,'connector_identity')).body.result.structuredContent.app_ids,[app.id]);
+ await ctx.req('/api/connectors/'+first.client_id,{token:ctx.owner,method:'PUT',body:{app_ids:[]}});
+ assert.deepEqual((await ctx.rpc(fresh.access_token,'apps_list')).body.result.structuredContent.apps,[]);
+});
+
+test('specialized visual and Crypto commands retain connector ownership and separate identical request IDs',async t=>{
+ const ctx=await setup(t);
+ const app=await ctx.store.registerApp({name:'CHK Crypto Analyse 2',capabilities:[
+  {name:'ui_status',readOnly:true},{name:'ui_capture',readOnly:true},{name:'ui_tap',readOnly:false},
+  {name:'crypto_portfolio',readOnly:true},{name:'crypto_chart_control',readOnly:false}
+ ]});
+ await ctx.store.registerApp({name:'CHK Crypto Android',capabilities:[{name:'crypto_portfolio',readOnly:true},{name:'crypto_chart_control',readOnly:false}]});
+ const a=await oauth(ctx,'Same display name');const b=await oauth(ctx,'Same display name',a);
+ const visualA=(await ctx.rpc(a.access_token,'crypto_action',{action:'ui_tap',args:{x:10,y:20},request_id:'same-visual-id'})).body.result.structuredContent;
+ const visualB=(await ctx.rpc(b.access_token,'crypto_action',{action:'ui_tap',args:{x:10,y:20},request_id:'same-visual-id'})).body.result.structuredContent;
+ assert.ok(visualA.id);assert.ok(visualB.id);assert.notEqual(visualA.id,visualB.id);
+ assert.equal(visualA.connector_id,a.connector_id);assert.equal(visualB.connector_id,b.connector_id);
+ assert.equal((await ctx.rpc(a.access_token,'crypto_action',{action:'ui_tap',args:{x:10,y:20},request_id:'same-visual-id'})).body.result.structuredContent.id,visualA.id);
+ assert.equal((await ctx.rpc(b.access_token,'crypto_result',{task_id:visualA.id})).body.result.structuredContent.error,'task_not_found');
+ assert.equal((await ctx.rpc(a.access_token,'crypto_result',{task_id:visualA.id})).body.result.structuredContent.id,visualA.id);
+ const portfolio=(await ctx.rpc(a.access_token,'crypto_portfolio')).body.result.structuredContent;
+ assert.ok(portfolio.task_id);assert.equal(ctx.store.getJob(portfolio.task_id).connector_id,a.connector_id);
+ assert.equal((await ctx.rpc(b.access_token,'crypto_task_result',{task_id:portfolio.task_id})).body.result.structuredContent.error,'crypto_task_not_found');
+ assert.equal((await ctx.rpc(a.access_token,'crypto_task_result',{task_id:portfolio.task_id})).body.result.structuredContent.task_id,portfolio.task_id);
+ const chart=(await ctx.rpc(b.access_token,'crypto_chart_control',{action:'zoom_in'})).body.result.structuredContent;
+ assert.equal(ctx.store.getJob(chart.task_id).connector_id,b.connector_id);
+ assert.equal(ctx.store.getJob(chart.task_id).state,'pending_approval');
+ assert.equal((await ctx.rpc(ctx.owner,'task_get',{task_id:portfolio.task_id})).body.result.structuredContent.id,portfolio.task_id);
+});

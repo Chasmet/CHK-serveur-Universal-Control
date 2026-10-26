@@ -15,7 +15,7 @@ const definitions = [
   })
 ];
 export function createAI(config, store) {
-  async function chat(input) {
+  async function chat(input, context = {}) {
     if (!config.ollamaUrl) throw Error("ollama_not_configured");
     const prompt = String(input || "").trim().slice(0, 4000);
     if (!prompt) throw Error("empty_message");
@@ -51,8 +51,11 @@ export function createAI(config, store) {
         let output;
         try {
           if (name === "list_apps") output = store.listApps(Boolean(config.legacyUrl));
-          else if (name === "submit_task") output = await store.submit({ ...args, source: "ai", legacy: Boolean(config.legacyUrl) });
-          else if (name === "task_status") output = store.getJob(args.task_id) || { error: "task_not_found" };
+          else if (name === "submit_task") output = await store.submit({ ...args, source: context.source ? context.source + ":ai" : "ai", connector_id: context.connector_id || null, legacy: Boolean(config.legacyUrl) });
+          else if (name === "task_status") {
+            const job = store.getJob(args.task_id);
+            output = job && (!context.connector_id || !job.connector_id || job.connector_id === context.connector_id) ? job : { error: "task_not_found" };
+          }
           else output = { error: "unknown_tool" };
         } catch (e) { output = { error: e.message }; }
         toolsCalled.push({ name, output });
