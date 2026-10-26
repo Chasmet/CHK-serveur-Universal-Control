@@ -1,0 +1,298 @@
+[
+  {
+    "name": "local3_status",
+    "readOnly": true
+  },
+  {
+    "name": "browser_inspect",
+    "readOnly": true
+  },
+  {
+    "name": "browser_capture",
+    "readOnly": true
+  },
+  {
+    "name": "browser_status",
+    "readOnly": true
+  },
+  {
+    "name": "browser_read_page",
+    "readOnly": true
+  },
+  {
+    "name": "browser_get_form",
+    "readOnly": true
+  },
+  {
+    "name": "files_list",
+    "readOnly": true
+  },
+  {
+    "name": "files_read_text",
+    "readOnly": true
+  },
+  {
+    "name": "files_read_bytes",
+    "readOnly": true
+  },
+  {
+    "name": "files_transfer_read",
+    "readOnly": true
+  },
+  {
+    "name": "files_stat",
+    "readOnly": true
+  },
+  {
+    "name": "files_hash",
+    "readOnly": true
+  },
+  {
+    "name": "files_catalog",
+    "readOnly": true
+  },
+  {
+    "name": "files_downloads",
+    "readOnly": true
+  },
+  {
+    "name": "files_preview",
+    "readOnly": true
+  },
+  {
+    "name": "files_detect_format",
+    "readOnly": true
+  },
+  {
+    "name": "files_capabilities",
+    "readOnly": true
+  },
+  {
+    "name": "files_archive_list",
+    "readOnly": true
+  },
+  {
+    "name": "files_archive_read",
+    "readOnly": true
+  },
+  {
+    "name": "files_media_inspect",
+    "readOnly": true
+  },
+  {
+    "name": "document_read",
+    "readOnly": true
+  },
+  {
+    "name": "document_page",
+    "readOnly": true
+  },
+  {
+    "name": "media_info",
+    "readOnly": true
+  },
+  {
+    "name": "media_frame",
+    "readOnly": true
+  },
+  {
+    "name": "media_codecs",
+    "readOnly": true
+  },
+  {
+    "name": "workspace_status",
+    "readOnly": true
+  },
+  {
+    "name": "notes_list",
+    "readOnly": true
+  },
+  {
+    "name": "notes_read",
+    "readOnly": true
+  },
+  {
+    "name": "video_editor_capabilities",
+    "readOnly": true
+  },
+  {
+    "name": "video_editor_queue_status",
+    "readOnly": true
+  },
+  {
+    "name": "video_editor_status",
+    "readOnly": true
+  },
+  {
+    "name": "video_editor_wait",
+    "readOnly": true
+  },
+  {
+    "name": "video_editor_project_read",
+    "readOnly": true
+  },
+  {
+    "name": "video_editor_verify_output",
+    "readOnly": true
+  },
+  {
+    "name": "publication_list",
+    "readOnly": true
+  },
+  {
+    "name": "publication_status",
+    "readOnly": true
+  },
+  {
+    "name": "android_action",
+    "readOnly": false
+  },
+  {
+    "name": "browser_tabs",
+    "readOnly": false
+  },
+  {
+    "name": "browser_open_url",
+    "readOnly": false
+  },
+  {
+    "name": "browser_click",
+    "readOnly": false
+  },
+  {
+    "name": "browser_type",
+    "readOnly": false
+  },
+  {
+    "name": "browser_scroll",
+    "readOnly": false
+  },
+  {
+    "name": "browser_batch",
+    "readOnly": false
+  },
+  {
+    "name": "files_write_text",
+    "readOnly": false
+  },
+  {
+    "name": "files_edit_text",
+    "readOnly": false
+  },
+  {
+    "name": "files_move",
+    "readOnly": false
+  },
+  {
+    "name": "files_copy",
+    "readOnly": false
+  },
+  {
+    "name": "files_mkdir",
+    "readOnly": false
+  },
+  {
+    "name": "files_trash",
+    "readOnly": false
+  },
+  {
+    "name": "files_restore",
+    "readOnly": false
+  },
+  {
+    "name": "files_zip",
+    "readOnly": false
+  },
+  {
+    "name": "files_unzip",
+    "readOnly": false
+  },
+  {
+    "name": "files_import_download",
+    "readOnly": false
+  },
+  {
+    "name": "files_external",
+    "readOnly": false
+  },
+  {
+    "name": "files_transfer_begin",
+    "readOnly": false
+  },
+  {
+    "name": "files_transfer_write",
+    "readOnly": false
+  },
+  {
+    "name": "files_transfer_commit",
+    "readOnly": false
+  },
+  {
+    "name": "files_transfer_abort",
+    "readOnly": false
+  },
+  {
+    "name": "files_task",
+    "readOnly": false
+  },
+  {
+    "name": "files_batch",
+    "readOnly": false
+  },
+  {
+    "name": "files_convert",
+    "readOnly": false
+  },
+  {
+    "name": "files_extract_archive",
+    "readOnly": false
+  },
+  {
+    "name": "document_create",
+    "readOnly": false
+  },
+  {
+    "name": "notes_save",
+    "readOnly": false
+  },
+  {
+    "name": "notes_trash",
+    "readOnly": false
+  },
+  {
+    "name": "notes_restore",
+    "readOnly": false
+  },
+  {
+    "name": "notes_export",
+    "readOnly": false
+  },
+  {
+    "name": "video_editor_project_create",
+    "readOnly": false
+  },
+  {
+    "name": "video_editor_project_update",
+    "readOnly": false
+  },
+  {
+    "name": "video_editor_render",
+    "readOnly": false
+  },
+  {
+    "name": "publication_prepare",
+    "readOnly": false
+  },
+  {
+    "name": "publication_cancel",
+    "readOnly": false
+  },
+  {
+    "name": "keyboard",
+    "readOnly": false
+  },
+  {
+    "name": "desktop",
+    "readOnly": false
+  }
+]

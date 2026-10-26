@@ -1,4 +1,5 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomBytes, createHash, timingSafeEqual } from "node:crypto";
 
@@ -11,6 +12,8 @@ export const safeEqual = (a, b) => {
   return timingSafeEqual(aa, bb);
 };
 export const clean = (value, max = 120) => String(value ?? "").trim().slice(0, max);
+const browserCapabilities = JSON.parse(readFileSync(new URL("./browser-capabilities.json", import.meta.url), "utf8"));
+const browserName = "CHK Agent Browser Android · Local 3";
 const jobStates = new Set(["pending_approval", "queued", "leased", "completed", "failed", "unknown", "cancelled"]);
 // Bounded JPEG screen previews are allowed only for explicitly opted-in CHK Crypto.
 const MAX_RESULT = 350000;
@@ -50,7 +53,7 @@ export class Store {
   }
   listApps(legacy = false) {
     const apps = Object.values(this.state.apps).map(app => ({
-      id: app.id, name: app.name, capabilities: app.capabilities, registered_at: app.registered_at,
+      id: app.id, name: app.name, diagnostic: app.diagnostic, capabilities: app.capabilities, registered_at: app.registered_at,
       last_seen: app.last_seen, online: Boolean(app.last_seen && now() - app.last_seen < 90000)
     }));
     if (legacy) apps.push({ id: "chk-legacy", name: "CHK Agent Browser (MCP existant)", capabilities: [{ name: "android_command", readOnly: false }], online: null, connection: "legacy" });
@@ -122,12 +125,43 @@ export class Store {
     });
     return updated;
   }
+  async extendBrowserCapabilities(id, input) {
+    const expected = new Map(browserCapabilities.map(c => [c.name, c.readOnly]));
+    const source = input?.capabilities;
+    if (!Array.isArray(source) || source.length !== expected.size
+        || new Set(source.map(c => c?.name)).size !== expected.size
+        || source.some(c => !c || !expected.has(c.name) || c.readOnly !== expected.get(c.name)))
+      throw Error("invalid_browser_capabilities");
+    let updated;
+    await this.change(state => {
+      const app = state.apps[id];
+      if (!app || app.name !== browserName) throw Error("invalid_browser_app");
+      const existing = new Map(app.capabilities.map(c => [c.name, c]));
+      for (const c of source) {
+        if (existing.has(c.name) && existing.get(c.name).readOnly !== c.readOnly)
+          throw Error("invalid_browser_policy");
+      }
+      for (const c of source) existing.set(c.name, {
+        name: c.name, readOnly: c.readOnly, description: clean(c.description, 150)
+      });
+      if (existing.size > 80) throw Error("capability_limit");
+      app.capabilities = [...existing.values()];
+      const d = input.diagnostic || {};
+      app.diagnostic = {
+        protocol_version: 2, version: clean(d.version, 40),
+        autonomous: d.autonomous === true, previews_allowed: d.previews_allowed === true,
+        reported_at: now()
+      };
+      updated = { ok: true, id, capability_count: app.capabilities.length };
+    });
+    return updated;
+  }
   appAuthorized(id, token) {
     const app = this.state.apps[id];
     return Boolean(app && typeof token === "string" && safeEqual(app.secret_hash, hash(token)));
   }
   async submit({ app_id, action, args = {}, request_id = "", source = "api", legacy = false }) {
-    if (typeof args !== "object" || !args || Array.isArray(args) || JSON.stringify(args).length > 16000) throw Error("invalid_arguments");
+    if (typeof args !== "object" || !args || Array.isArray(args) || Buffer.byteLength(JSON.stringify(args), "utf8") > 96000) throw Error("invalid_arguments");
     const app = this.state.apps[app_id];
     const capability = app?.capabilities.find(c => c.name === action);
     if (!capability && !(legacy && app_id === "chk-legacy" && action === "android_command")) throw Error("capability_not_registered");
@@ -202,8 +236,12 @@ export class Store {
     let job;
     await this.change(s => {
       job = s.jobs[id];
-      if (!job || job.app_id !== appId || job.state !== "leased") throw Error("invalid_job_result");
-      if (JSON.stringify(payload).length > MAX_RESULT) throw Error("result_too_large");
+      if (!job || job.app_id !== appId) throw Error("invalid_job_result");
+      // A lost HTTP acknowledgement must not trap the Android durable outbox.
+      if (["completed", "failed"].includes(job.state)
+          && JSON.stringify(job.result) === JSON.stringify(payload)) return;
+      if (job.state !== "leased") throw Error("invalid_job_result");
+      if (Buffer.byteLength(JSON.stringify(payload), "utf8") > MAX_RESULT) throw Error("result_too_large");
       job.result = payload;
       job.state = payload?.ok === false ? "failed" : "completed";
       job.updated_at = now();

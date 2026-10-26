@@ -14,7 +14,25 @@ const tools = [
   { name: "crypto_result", title: "Résultat écran CHK Crypto", description: "Récupère l'état réel d'une tâche et son image JPEG si capture terminée.", inputSchema: { type: "object", required:["task_id"], properties: {task_id:{type:"string"}} }, readOnlyHint: true },
   { name: "chk_read", title: "CHK existant: lecture", description: "Interroge uniquement server_info ou android_status de la passerelle MCP CHK existante, si configurée.", inputSchema: { type: "object", properties: { name: { type: "string", enum: ["server_info", "android_status"] } } }, readOnlyHint: true }
 ];
-const textResult = obj => ({ content: [{ type: "text", text: JSON.stringify(obj) }], structuredContent: obj, isError: Boolean(obj?.error) });
+const textResult = value => {
+  const obj = Array.isArray(value) ? { items: value } : value && typeof value === "object" ? value : { value };
+  return { content: [{ type: "text", text: JSON.stringify(obj) }], structuredContent: obj,
+    isError: Boolean(obj.error || obj.state === "failed") };
+};
+function browserResult(job, store) {
+  if (job?.state !== "completed" || store.state.apps[job.app_id]?.name !== "CHK Agent Browser Android · Local 3")
+    return textResult(job);
+  let payload;
+  try { payload = JSON.parse(job.result?.message); } catch { return textResult(job); }
+  const jpeg = payload?.jpeg_base64;
+  if (typeof jpeg !== "string" || jpeg.length > 190000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(jpeg)
+      || !Buffer.from(jpeg, "base64").subarray(0, 3).equals(Buffer.from([255,216,255])))
+    return textResult(job);
+  const { jpeg_base64, ...meta } = payload;
+  const safe = { ...job, result: { ...job.result, message: meta } };
+  return { content: [{ type: "text", text: JSON.stringify(safe) },
+    { type: "image", mimeType: "image/jpeg", data: jpeg }], structuredContent: safe, isError: false };
+}
 function exposedTools() {
   return tools.map(({ readOnlyHint, ...tool }) => ({
     ...tool,
@@ -41,6 +59,9 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask) 
         const name = rpc.params?.name;
         const a = rpc.params?.arguments || {};
         let output;
+        const browserApp = () => store.listApps(false)
+          .filter(v => v.name === "CHK Agent Browser Android · Local 3")
+          .sort((a,b) => Number(b.online) - Number(a.online) || Number(b.registered_at) - Number(a.registered_at))[0];
         const cryptoApp = () => store.listApps(false)
           .filter(v => v.name === "CHK Crypto Analyse 2"
             && v.capabilities?.some(c => c.name === "ui_status"))
@@ -66,7 +87,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask) 
         else if (name === "crypto_result") {
           output = store.getJob(a.task_id) || { error: "task_not_found" };
         }
-        else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: store.listApps(Boolean(config.legacyUrl)).length, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl) };
+        else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: store.listApps(Boolean(config.legacyUrl)).length, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl), browser_connected: Boolean(browserApp()?.online), browser_protocol: 2 };
         else if (name === "apps_list") output = { apps: store.listApps(Boolean(config.legacyUrl)) };
         else if (name === "app_register") output = await store.registerApp(a);
         else if (name === "app_invite") output = await store.createInvite();
@@ -74,7 +95,9 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask) 
         else if (name === "task_get") output = store.getJob(a.task_id) || { error: "task_not_found" };
         else if (name === "task_cancel") output = await store.cancel(a.task_id);
         else if (name === "ai_chat") output = await ai.chat(a.message);
-        else if (name === "chk_read") output = !["server_info", "android_status"].includes(a.name || "android_status") ? { error: "forbidden_read_tool" } : config.legacyUrl ? await legacyCall(a.name || "android_status", {}) : { error: "legacy_not_configured" };
+        else if (name === "chk_read") output = !["server_info", "android_status"].includes(a.name || "android_status") ? { error: "forbidden_read_tool" } : config.legacyUrl ? await legacyCall(a.name || "android_status", {}) : browserApp()
+          ? { connection: "paired_worker", app: browserApp(), legacy_required: false }
+          : { error: "browser_not_paired", legacy_required: false };
         else return security.json(res, 200, { jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "Unknown tool" } });
         if (name === "crypto_result" && output?.state === "completed"
               && output?.action === "ui_capture" && output?.result?.jpegBase64) {
@@ -88,7 +111,8 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask) 
             structuredContent: safe,
             isError: false
           };
-        } else result = textResult(output);
+        } else if (name === "task_get") result = browserResult(output, store);
+        else result = textResult(output);
       } else return security.json(res, 200, { jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "Method not found" } });
       return security.json(res, 200, { jsonrpc: "2.0", id: rpc.id, result });
     } catch (err) {

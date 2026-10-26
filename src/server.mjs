@@ -17,12 +17,12 @@ const baseConfig = () => ({
   ollamaModel: process.env.OLLAMA_MODEL || "qwen3:1.7b",
   allowLocalOAuth: process.env.ALLOW_LOCAL_OAUTH === "true"
 });
-async function readBody(req) {
+async function readBody(req, limit = 32768) {
   const pieces = [];
   let size = 0;
   for await (const part of req) {
     size += part.length;
-    if (size > 32768) throw Error("body_too_large");
+    if (size > limit) throw Error("body_too_large");
     pieces.push(part);
   }
   const str = Buffer.concat(pieces).toString("utf8");
@@ -86,7 +86,8 @@ export async function buildServer(opts = {}) {
         res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });
         return res.end(await readFile(fileURLToPath(new URL("../public/chat.js", import.meta.url)), "utf8"));
       }
-      const body = ["POST", "PUT"].includes(req.method) ? await readBody(req) : {};
+      const body = ["POST", "PUT"].includes(req.method) ? await readBody(req, /^\/api\/agent\/[a-f0-9-]{36}\/result$/.test(url.pathname) ? 350000
+        : ["/mcp", "/api/tasks"].includes(url.pathname) ? 100000 : 32768) : {};
       const oauth = await security.route(req, res, url, body);
       if (oauth !== false) return;
       if (req.method === "POST" && url.pathname === "/api/login") {
@@ -113,7 +114,9 @@ export async function buildServer(opts = {}) {
         const credential = security.bearer(req);
         if (!store.appAuthorized(id, credential)) return json(res, 401, { error: "app_auth_required" });
         if (bits[4] === "capabilities" && req.method === "PUT")
-          return json(res, 200, await store.extendVisualCapabilities(id, body));
+          return json(res, 200, store.state.apps[id]?.name === "CHK Agent Browser Android · Local 3"
+            ? await store.extendBrowserCapabilities(id, body)
+            : await store.extendVisualCapabilities(id, body));
         if (bits[4] === "poll" && req.method === "GET") return json(res, 200, { task: await store.poll(id) });
         if (bits[4] === "result" && req.method === "POST") return json(res, 200, { task: await store.result(id, body.task_id, body.result) });
         return json(res, 404, { error: "unknown_agent_endpoint" });

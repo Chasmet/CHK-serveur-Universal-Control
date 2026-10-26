@@ -180,3 +180,42 @@ test("MCP apps_list returns structured object and exposes online Android connect
     { bearer: app.secret })).json();
   assert.equal(noCommand.task, null, "Unapproved filesystem mutations must not reach Android");
 });
+
+test("Local 3 upgrades paired tools, returns actual screenshots, and acknowledges results idempotently", async t => {
+  const { request, access_token } = await setup(t);
+  const { readFile } = await import('node:fs/promises');
+  const capabilities = JSON.parse(await readFile(new URL('../src/browser-capabilities.json', import.meta.url), 'utf8'));
+  const app = await (await request('/api/apps', {method:'POST', bearer:access_token,
+    body:{name:'CHK Agent Browser Android · Local 3',capabilities:[{name:'browser_status',readOnly:true}]}})).json();
+  const route = '/api/agent/' + app.id;
+  assert.equal((await request(route+'/capabilities', {method:'PUT',bearer:'wrong',body:{capabilities}})).status,401);
+  const bad = capabilities.map(c => c.name === 'desktop' ? {...c,readOnly:true} : c);
+  assert.equal((await request(route+'/capabilities', {method:'PUT',bearer:app.secret,body:{capabilities:bad}})).status,400);
+  const synced = await request(route+'/capabilities', {method:'PUT',bearer:app.secret,
+    body:{capabilities,diagnostic:{version:'1.0.999',autonomous:true,previews_allowed:true,secret:'never expose'}}});
+  assert.equal(synced.status,200);
+  const rpc = async (name,args={}) => (await (await request('/mcp',{method:'POST',bearer:access_token,
+    body:{jsonrpc:'2.0',id:1,method:'tools/call',params:{name,arguments:args}}})).json()).result;
+  const listing=await rpc('apps_list');
+  assert.equal(Array.isArray(listing.structuredContent),false);
+  assert.equal(listing.structuredContent.apps[0].diagnostic.version,'1.0.999');
+  assert.equal(JSON.stringify(listing).includes('never expose'),false);
+  assert.ok(listing.structuredContent.apps[0].capabilities.some(c=>c.name==='files_transfer_read'));
+  assert.equal((await rpc('chk_read',{name:'android_status'})).structuredContent.legacy_required,false);
+  const task=(await rpc('task_submit',{app_id:app.id,action:'browser_capture'})).structuredContent;
+  assert.equal(task.state,'queued');
+  assert.equal((await (await request(route+'/poll',{bearer:app.secret})).json()).task.id,task.id);
+  // Valid JPEG marker and a payload exceeding the old 32 KiB HTTP body limit.
+  const jpeg=Buffer.concat([Buffer.from([255,216,255]),Buffer.alloc(45000),Buffer.from([255,217])]).toString('base64');
+  const result={task_id:task.id,result:{ok:true,message:JSON.stringify({jpeg_base64:jpeg,width:720,height:960})}};
+  for(let i=0;i<2;i++)assert.equal((await request(route+'/result',{method:'POST',bearer:app.secret,body:result})).status,200);
+  const completed=await rpc('task_get',{task_id:task.id});
+  assert.equal(completed.structuredContent.state,'completed');
+  assert.equal(completed.content[1].type,'image');
+  assert.equal(completed.content[1].data,jpeg);
+  assert.equal(JSON.stringify(completed.structuredContent).includes(jpeg),false);
+  result.result.message='different result';
+  assert.equal((await request(route+'/result',{method:'POST',bearer:app.secret,body:result})).status,400);
+  const write=(await rpc('task_submit',{app_id:app.id,action:'files_transfer_write',args:{base64:'a'.repeat(65000)}})).structuredContent;
+  assert.equal(write.state,'pending_approval');
+});
