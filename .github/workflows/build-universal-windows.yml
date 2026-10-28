@@ -29,9 +29,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
       - name: Vérifier serveur MCP multi-applications et Pirate Warrior 2
         shell: pwsh
         run: |
@@ -39,46 +36,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Server syntax error' }
           npm test
           if ($LASTEXITCODE -ne 0) { throw 'Server integration tests failed' }
-      - name: Compiler la deuxième identité Tailscale Windows
+      - name: Réutiliser le pont Tailscale éprouvé de la Release stable 1.0.4
         shell: pwsh
-        working-directory: windows/tsbridge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          go mod init chk-universal-tsbridge
-          if ($LASTEXITCODE -ne 0) { throw 'go mod init failed' }
-          # Keep Go checksum verification ON. Work around intermittent HTTP/2 checksum-service errors.
-          $env:GODEBUG='http2client=0'
-          $ok=$false
-          for ($attempt=1; $attempt -le 4; $attempt++) {
-            go get tailscale.com@v1.104.2
-            if ($LASTEXITCODE -eq 0) { $ok=$true; break }
-            Write-Warning "Go dependency transient failure ($attempt/4), retrying"
-            Start-Sleep -Seconds (3 * $attempt)
-          }
-          if (!$ok) { throw 'Go dependency failed after verified retries' }
-          $ok=$false
-          for ($attempt=1; $attempt -le 4; $attempt++) {
-            go mod tidy
-            if ($LASTEXITCODE -eq 0) { $ok=$true; break }
-            Write-Warning "Go checksum service transient failure ($attempt/4), retrying without disabling verification"
-            Start-Sleep -Seconds (3 * $attempt)
-          }
-          if (!$ok) { throw 'Go tidy failed after verified retries' }
-          go test -v .
-          if ($LASTEXITCODE -ne 0) { throw 'Tailscale bridge tests failed' }
-          New-Item -ItemType Directory -Force '../runtime' | Out-Null
-          go build -trimpath -ldflags '-s -w' -o '../runtime/tailscale-bridge.exe' .
-          if ($LASTEXITCODE -ne 0) { throw 'Tailscale bridge build failed' }
-          # Real Windows EXE first-run test: create the files that failed on PC-SALON.
-          $env:CHK_UNIVERSAL_HOME = Join-Path $env:RUNNER_TEMP 'chk-pc-universel-first-run'
-          $storageOutput = & '../runtime/tailscale-bridge.exe' --diagnostic-storage 2>&1 | Out-String
-          if ($LASTEXITCODE -ne 0 -or $storageOutput -notmatch 'STORAGE_TEST_OK') {
-            Write-Host $storageOutput
-            throw 'First-run Windows Tailscale storage regression'
-          }
-          Write-Host 'First-run Tailscale log config and state created successfully on Windows'
-          $env:CHK_UNIVERSAL_HOME = Join-Path $env:RUNNER_TEMP 'CHKServeurPC-Storage-Test'
-          & '../runtime/tailscale-bridge.exe' '--diagnostic-storage'
-          if ($LASTEXITCODE -ne 0) { throw 'Real Windows atomic Tailscale storage test failed' }
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force 'windows/stable','windows/runtime' | Out-Null
+          gh release download 'chk-serveur-pc-v1.0.4' --pattern 'CHK-SERVEUR-PC-UNIVERSEL-v1.0.4.exe' --dir 'windows/stable'
+          if ($LASTEXITCODE -ne 0) { throw 'Trusted stable v1.0.4 release unavailable' }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'validation/extract-stable-bridge.ps1' -ReleaseExe 'windows/stable/CHK-SERVEUR-PC-UNIVERSEL-v1.0.4.exe' -Destination 'windows/runtime/tailscale-bridge.exe'
+          if ($LASTEXITCODE -ne 0) { throw 'Stable Tailscale bridge extraction or integrity failed' }
       - name: Construire llama.cpp CPU SSE4.2 sans AVX pour Celeron G1620
         shell: pwsh
         run: |
