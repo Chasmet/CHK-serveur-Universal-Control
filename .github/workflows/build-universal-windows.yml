@@ -131,7 +131,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
   release:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/local-ai-sse42-safe-20261028'
     needs: build-windows
     runs-on: ubuntu-latest
     permissions:
@@ -152,8 +152,15 @@ jobs:
           test -s release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.5.exe
           sha256sum release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.5.exe > release/SHA256SUMS.txt
           TAG="chk-serveur-pc-v1.0.5"
+          EXTRA=()
+          TITLE="CHK SERVEUR PC UNIVERSEL 1.0.5"
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            TAG="chk-serveur-pc-v1.0.5-rc1"
+            TITLE="CHK SERVEUR PC UNIVERSEL 1.0.5 RC1 - TEST IA LOCALE"
+            EXTRA+=(--prerelease)
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.5.exe --clobber
+            gh release upload "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.5.exe release/SHA256SUMS.txt --clobber
           else
-            gh release create "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.5.exe release/SHA256SUMS.txt --target "$GITHUB_SHA" --title "CHK SERVEUR PC UNIVERSEL 1.0.5" --notes-file release-notes-1.0.5.md
+            gh release create "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.5.exe release/SHA256SUMS.txt --target "$GITHUB_SHA" --title "$TITLE" --notes-file release-notes-1.0.5.md "${EXTRA[@]}"
           fi
