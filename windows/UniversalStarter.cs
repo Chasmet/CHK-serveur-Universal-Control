@@ -49,7 +49,7 @@ namespace CHKUniversalControl
 
     sealed class MainPanel : Form
     {
-        const string Version = "1.0.4";
+        const string Version = "1.0.5";
         static readonly string Root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CHKUniversalControl");
         static readonly string Runtime = Path.Combine(Root, "runtime-v" + Version);
@@ -58,6 +58,10 @@ namespace CHKUniversalControl
         static readonly string NodeFile = Path.Combine(Runtime, "node.exe");
         static readonly string BridgeFile = Path.Combine(Runtime, "tailscale-bridge.exe");
         static readonly string ServerFile = Path.Combine(Runtime, "src", "server.mjs");
+        static readonly string LocalAIExe = Path.Combine(Runtime, "ai", "llama-server.exe");
+        static readonly string LocalAIModel = Path.Combine(Root, "models", "Qwen3-0.6B.Q4_K_M.gguf");
+        const string LocalAIModelURL = "https://huggingface.co/QuantFactory/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B.Q4_K_M.gguf";
+        const string LocalAIModelSha256 = "7af3fdf842f87b24672f8a7f1dd50404043f0bfb71093ff91c31d2b49df4631d";
         static readonly string ChatURL = "http://127.0.0.1:8787/chat";
 
         readonly object sync = new object();
@@ -72,6 +76,7 @@ namespace CHKUniversalControl
         readonly System.Windows.Forms.Timer tick = new System.Windows.Forms.Timer();
         Process node;
         Process bridge;
+        Process localAI;
         string authUrl = "";
         string publicUrl = "";
         string nodeBaseUrl = "";
@@ -157,6 +162,8 @@ namespace CHKUniversalControl
                 } catch (Exception e) { ShowError(e); }
             });
 
+            MakeButton("INSTALLER / ACTIVER IA LOCALE (OPTIONNELLE)", 578, delegate { InstallLocalAIAsync(); });
+
             MakeButton("VOIR LES ERREURS ET LE DIAGNOSTIC", 528, delegate {
                 try {
                     if (!File.Exists(LogFile)) {
@@ -170,8 +177,8 @@ namespace CHKUniversalControl
                     diagnostics.ScrollToCaret();
                 } catch (Exception e) { ShowError(e); }
             });
-            diagnostics.Left = 22; diagnostics.Top = 582; diagnostics.Width = 625;
-            diagnostics.Height = 144; diagnostics.Multiline = true;
+            diagnostics.Left = 22; diagnostics.Top = 630; diagnostics.Width = 625;
+            diagnostics.Height = 95; diagnostics.Multiline = true;
             diagnostics.ReadOnly = true; diagnostics.ScrollBars = ScrollBars.Vertical;
             diagnostics.BackColor = Color.FromArgb(18, 35, 54);
             diagnostics.ForeColor = Color.LightGray;
@@ -333,6 +340,7 @@ namespace CHKUniversalControl
                     InstallResources();
                     StartNode(false);
                     StartBridge();
+                    try { StartLocalAI(); } catch (Exception aiError) { Log("OPTIONAL_AI_START_FAILED " + aiError.Message); }
                     // Autostart is optional: security software can deny copying a new
                     // unsigned EXE or updating the registry. Neither failure should
                     // take down the already-running, healthy local MCP server.
@@ -402,6 +410,10 @@ namespace CHKUniversalControl
             start.EnvironmentVariables["JWT_SECRET"] = Convert.ToString(cfg["jwt_secret"]);
             start.EnvironmentVariables["DATA_FILE"] = Path.Combine(Root, "data", "server.json");
             start.EnvironmentVariables["OLLAMA_URL"] = "";
+            // Loopback-only optional model. This never changes the public MCP URL.
+            start.EnvironmentVariables["LOCAL_AI_URL"] = "http://127.0.0.1:8795";
+            start.EnvironmentVariables["LOCAL_AI_MODEL"] = "chk-qwen-local";
+            start.EnvironmentVariables["LOCAL_AI_MODEL_FILE"] = LocalAIModel;
             node = new Process { StartInfo = start, EnableRaisingEvents = true };
             node.OutputDataReceived += delegate(object _, DataReceivedEventArgs e) { if (e.Data != null) Log("NODE " + e.Data); };
             node.ErrorDataReceived += delegate(object _, DataReceivedEventArgs e) { if (e.Data != null) Log("NODE " + e.Data); };
@@ -560,7 +572,81 @@ namespace CHKUniversalControl
             using(var key = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"))
                 key.SetValue("CHKUniversalControl", "\"" + target + "\"", RegistryValueKind.String);
         }
+        // On this 2013 Celeron the model must NEVER block Node or Tailscale.
+        // The optional model stays in the persistent user-data directory.
+        void StartLocalAI() {
+            if (!File.Exists(LocalAIModel)) return;
+            if (!File.Exists(LocalAIExe)) throw new Exception("Moteur IA SSE4.2 absent du paquet; serveur MCP préservé.");
+            if (IsProcessRunning(localAI)) return;
+            var info = new ProcessStartInfo(LocalAIExe,
+                "-m \"" + LocalAIModel + "\" --alias chk-qwen-local --host 127.0.0.1 --port 8795 -t 1 -c 1024 -ngl 0 --no-webui") {
+                UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
+                WorkingDirectory = Path.GetDirectoryName(LocalAIExe),
+                RedirectStandardOutput = true, RedirectStandardError = true
+            };
+            var candidate = new Process { StartInfo = info, EnableRaisingEvents = true };
+            if (!candidate.Start()) throw new Exception("Windows refuse de lancer l'IA facultative.");
+            localAI = candidate;
+            localAI.OutputDataReceived += delegate(object _, DataReceivedEventArgs e) { if (e.Data != null && e.Data.Contains("error")) Log("LOCAL_AI " + e.Data); };
+            localAI.ErrorDataReceived += delegate(object _, DataReceivedEventArgs e) { if (e.Data != null && e.Data.Contains("error")) Log("LOCAL_AI " + e.Data); };
+            localAI.BeginOutputReadLine();
+            localAI.BeginErrorReadLine();
+            UpdateStatus("IA locale Qwen 0.6B lancée en mode CPU (1 thread). MCP inchangé.");
+        }
+        void InstallLocalAIAsync() {
+            lock(sync) { if (busy) { UpdateStatus("Une installation est déjà en cours."); return; } busy = true; }
+            ThreadPool.QueueUserWorkItem(delegate {
+                try {
+                    // Initial runtime extraction is safe and does not stop a running Node.
+                    InstallResources();
+                    if (!File.Exists(LocalAIExe))
+                        throw new Exception("llama.cpp sans AVX absent du package : ne pas utiliser un binaire AVX.");
+                    if (!File.Exists(LocalAIModel)) {
+                        Directory.CreateDirectory(Path.GetDirectoryName(LocalAIModel));
+                        var partial = LocalAIModel + ".download";
+                        if (File.Exists(partial)) File.Delete(partial);
+                        UpdateStatus("Téléchargement facultatif du modèle Qwen 0.6B (~484 Mo)...");
+                        ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072;
+                        try {
+                            var req = (HttpWebRequest)WebRequest.Create(LocalAIModelURL);
+                            req.Timeout = 600000; req.ReadWriteTimeout = 60000;
+                            using (var res = (HttpWebResponse)req.GetResponse())
+                            using (var source = res.GetResponseStream())
+                            using (var target = new FileStream(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None)) {
+                                var buffer = new byte[65536];
+                                long size = 0;
+                                int length;
+                                while ((length = source.Read(buffer, 0, buffer.Length)) > 0) {
+                                    size += length;
+                                    if (size > 550000000) throw new Exception("Téléchargement IA plus gros que prévu.");
+                                    target.Write(buffer, 0, length);
+                                }
+                                if (size < 300000000) throw new Exception("Fichier IA incomplet.");
+                            }
+                            string actual;
+                            using (var stream = File.OpenRead(partial))
+                            using (var sha = SHA256.Create())
+                                actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                            if (!String.Equals(actual, LocalAIModelSha256, StringComparison.OrdinalIgnoreCase))
+                                throw new Exception("Empreinte SHA-256 du modèle incorrecte.");
+                            File.Move(partial, LocalAIModel);
+                        } catch {
+                            try { if (File.Exists(partial)) File.Delete(partial); } catch { }
+                            throw;
+                        }
+                    }
+                    StartLocalAI();
+                    UpdateStatus("IA locale installée. Le lien ChatGPT et tes trois connecteurs sont inchangés.");
+                } catch (Exception e) {
+                    // Do not change Node, the public URL, OAuth or Tailscale on AI failure.
+                    Log("LOCAL_AI_OPTIONAL_FAILED " + e.Message);
+                    UpdateStatus("IA optionnelle indisponible : " + e.Message + ". Le MCP existant continue.");
+                } finally { lock(sync) { busy = false; } }
+            });
+        }
+
         void StopChildren() {
+            try { if (localAI != null && !localAI.HasExited) localAI.Kill(); } catch { }
             try { if (bridge != null && !bridge.HasExited) bridge.Kill(); } catch { }
             try { if (node != null && !node.HasExited) node.Kill(); } catch { }
         }
@@ -592,11 +678,12 @@ namespace CHKUniversalControl
                     if(zip.GetEntry("node.exe")==null || zip.GetEntry("tailscale-bridge.exe")==null ||
                         zip.GetEntry("src/server.mjs")==null || zip.GetEntry("src/godot.mjs")==null ||
                         zip.GetEntry("src/browser-capabilities.json")==null || zip.GetEntry("src/version.mjs")==null ||
+                        zip.GetEntry("src/local-ai.mjs")==null || zip.GetEntry("ai/llama-server.exe")==null ||
                         zip.GetEntry("public/chat.html")==null || zip.GetEntry("public/oauth-login.js")==null)
                         throw new Exception("Missing required files in packaged Windows executable");
                 }
             }
-            if(Version!="1.0.4")throw new Exception("Incorrect Windows launcher version");
+            if(Version!="1.0.5")throw new Exception("Incorrect Windows launcher version");
             // Regression for the user's screenshot: Process.HasExited throws when
             // Process.Start was denied and no native process is associated.
             using(var neverStarted = new Process()) {

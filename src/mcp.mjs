@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { permissionView, connectorPermission } from "./autonomy.mjs";
 import { browserRoutes, browserTools } from "./browser-tools.mjs";
@@ -26,7 +27,7 @@ const tools = [
   { name: "task_submit", title: "Envoyer une commande", description: "Envoie une action vers une application enregistrée. Les actions d'écriture requièrent approbation explicite; l'état queued n'est pas completed.", inputSchema: { type: "object", required: ["action"], properties: { app_id: { type: "string" }, action: { type: "string" }, args: { type: "object" }, request_id: { type: "string" } } } },
   { name: "task_get", title: "Etat de tâche", description: "Lire le résultat réel ou l'état d'une tâche.", inputSchema: { type: "object", required: ["task_id"], properties: { task_id: { type: "string" } } }, readOnlyHint: true },
   { name: "task_cancel", title: "Annuler commande", description: "Annule une tâche encore non exécutée.", inputSchema: { type: "object", properties: { task_id: { type: "string" }, workflow_id:{type:"string"}, app_id:{type:"string"} },anyOf:[{required:["task_id"]},{required:["workflow_id"]}] } },
-  { name: "ai_chat", title: "Assistant Qwen open source", description: "Pose une question au modèle local via Ollama et orchestre des outils disponibles. Modèle externe optionnel.", inputSchema: { type: "object", required: ["message"], properties: { message: { type: "string" } } } },
+  { name: "ai_chat", title: "Assistant Qwen open source", description: "Assistant facultatif : Ollama existant ou Qwen3 0.6B via llama.cpp local. Qwen léger répond en texte seulement et ne commande aucun outil.", inputSchema: { type: "object", required: ["message"], properties: { message: { type: "string" } } } },
   { name: "crypto_capture", title: "Voir CHK Crypto", description: "Demande une capture JPEG de CHK Crypto, exclusivement si l'utilisateur a activé Accessibilité et vision. Retourne un task_id à suivre.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "crypto_inspect", title: "Lire les contrôles CHK Crypto", description: "Analyse les boutons et leurs positions sur l'écran CHK Crypto ouvert. Retourne task_id.", inputSchema: { type: "object", properties: {} }, readOnlyHint: true },
   { name: "crypto_action", title: "Contrôler CHK Crypto", description: "Appui, souris, balayage, saisie de texte ou retour Android, uniquement dans CHK Crypto après activation volontaire du service Accessibilité. Aucun ordre ni secret autorisé; retourne task_id, ne pas confondre queued et completed.", inputSchema: { type: "object", required: ["action"], properties: { action: {type:"string", enum:["ui_tap","ui_click","ui_long_press","ui_swipe","ui_type","ui_back"]}, args:{type:"object"}, request_id:{type:"string"} } } },
@@ -145,7 +146,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
           output = canReadJob(job) ? job : { error: "task_not_found" };
         }
         else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: allowedApps === null ? Object.keys(store.state.apps).length + Number(Boolean(config.legacyUrl)) : allowedApps.length,
-          connectors: Object.keys(store.state.connectors).length, oauth_clients: Object.keys(store.state.clients).length, registry_limit: null, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl), version: SERVER_VERSION, browser_protocol: 2, browser_connected: Boolean(browserApp()?.online) };
+          connectors: Object.keys(store.state.connectors).length, oauth_clients: Object.keys(store.state.clients).length, registry_limit: null, ai_configured: Boolean(config.ollamaUrl || (config.localAIUrl && config.localAIModelFile && existsSync(config.localAIModelFile))), ai_backend: config.ollamaUrl ? "ollama" : config.localAIModelFile && existsSync(config.localAIModelFile) ? "llama_cpp_local_optional" : "none", legacy_configured: Boolean(config.legacyUrl), version: SERVER_VERSION, browser_protocol: 2, browser_connected: Boolean(browserApp()?.online) };
         else if (name === "apps_list") output = store.appsPage(a, allowedApps, Boolean(config.legacyUrl));
         else if (name === "crypto_ticker") output = await markets.ticker(a);
         else if (name === "crypto_orderbook") output = await markets.orderbook(a);

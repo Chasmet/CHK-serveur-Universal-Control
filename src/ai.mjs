@@ -1,3 +1,5 @@
+import { createLocalAI } from "./local-ai.mjs";
+import { existsSync } from "node:fs";
 // Ollama is optional. Inference runs outside Supabase Edge.
 function defineTool(name, description, parameters) {
   return { type: "function", function: { name, description, parameters } };
@@ -15,8 +17,13 @@ const definitions = [
   })
 ];
 export function createAI(config, store) {
+  const local = config.localAIUrl ? createLocalAI({url:config.localAIUrl,model:config.localAIModel || "chk-qwen-local"}) : null;
   async function chat(input, context = {}) {
-    if (!config.ollamaUrl) throw Error("ollama_not_configured");
+    if (!config.ollamaUrl) {
+      if (!local) throw Error("ollama_not_configured");
+      if (config.localAIModelFile && !existsSync(config.localAIModelFile)) throw Error("local_ai_not_installed");
+      return local.chat(input);
+    }
     const prompt = String(input || "").trim().slice(0, 4000);
     if (!prompt) throw Error("empty_message");
     const messages = [

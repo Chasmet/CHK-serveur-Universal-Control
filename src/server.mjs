@@ -22,6 +22,9 @@ const baseConfig = () => ({
   legacyUrl: process.env.CHK_LEGACY_MCP_URL || "",
   ollamaUrl: process.env.OLLAMA_URL || "",
   ollamaModel: process.env.OLLAMA_MODEL || "qwen3:1.7b",
+  localAIUrl: process.env.LOCAL_AI_URL || "",
+  localAIModel: process.env.LOCAL_AI_MODEL || "chk-qwen-local",
+  localAIModelFile: process.env.LOCAL_AI_MODEL_FILE || "",
   allowLocalOAuth: process.env.ALLOW_LOCAL_OAUTH === "true"
 });
 async function readBody(req, limit = 32768) {
@@ -181,7 +184,7 @@ export async function buildServer(opts = {}) {
       }
       return json(res, 404, { error: "not_found" });
     } catch (err) {
-      const ordinary = /^(invalid_|app_|capability_|job_|unknown_|not_|cannot_|empty_|body_|client_|result_|legacy_|ollama_|idempotency_)/.test(err.message);
+      const ordinary = /^(invalid_|app_|capability_|job_|unknown_|not_|cannot_|empty_|body_|client_|result_|legacy_|ollama_|local_ai_|idempotency_)/.test(err.message);
       return json(res, ordinary ? 400 : 500, { error: ordinary ? err.message : "internal_error" });
     }
   });

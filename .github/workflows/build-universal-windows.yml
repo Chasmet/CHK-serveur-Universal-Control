@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - 'feature/**'
     paths:
       - 'src/**'
       - 'public/**'
@@ -12,7 +13,7 @@ on:
       - 'package.json'
       - 'validation/**'
       - 'tests/**'
-      - 'release-notes-1.0.4.md'
+      - 'release-notes-1.0.5.md'
 concurrency:
   group: chk-universal-oneclick-${{ github.ref }}
   cancel-in-progress: true
@@ -28,9 +29,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - uses: actions/setup-go@v5
-        with:
-          go-version: 'stable'
       - name: Vérifier serveur MCP multi-applications et Pirate Warrior 2
         shell: pwsh
         run: |
@@ -38,32 +36,39 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Server syntax error' }
           npm test
           if ($LASTEXITCODE -ne 0) { throw 'Server integration tests failed' }
-      - name: Compiler la deuxième identité Tailscale Windows
+      - name: Réutiliser le pont Tailscale éprouvé de la Release stable 1.0.4
         shell: pwsh
-        working-directory: windows/tsbridge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          go mod init chk-universal-tsbridge
-          if ($LASTEXITCODE -ne 0) { throw 'go mod init failed' }
-          go get tailscale.com@v1.104.2
-          if ($LASTEXITCODE -ne 0) { throw 'Go dependency failed' }
-          go mod tidy
-          if ($LASTEXITCODE -ne 0) { throw 'Go tidy failed' }
-          go test -v .
-          if ($LASTEXITCODE -ne 0) { throw 'Tailscale bridge tests failed' }
-          New-Item -ItemType Directory -Force '../runtime' | Out-Null
-          go build -trimpath -ldflags '-s -w' -o '../runtime/tailscale-bridge.exe' .
-          if ($LASTEXITCODE -ne 0) { throw 'Tailscale bridge build failed' }
-          # Real Windows EXE first-run test: create the files that failed on PC-SALON.
-          $env:CHK_UNIVERSAL_HOME = Join-Path $env:RUNNER_TEMP 'chk-pc-universel-first-run'
-          $storageOutput = & '../runtime/tailscale-bridge.exe' --diagnostic-storage 2>&1 | Out-String
-          if ($LASTEXITCODE -ne 0 -or $storageOutput -notmatch 'STORAGE_TEST_OK') {
-            Write-Host $storageOutput
-            throw 'First-run Windows Tailscale storage regression'
-          }
-          Write-Host 'First-run Tailscale log config and state created successfully on Windows'
-          $env:CHK_UNIVERSAL_HOME = Join-Path $env:RUNNER_TEMP 'CHKServeurPC-Storage-Test'
-          & '../runtime/tailscale-bridge.exe' '--diagnostic-storage'
-          if ($LASTEXITCODE -ne 0) { throw 'Real Windows atomic Tailscale storage test failed' }
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Force 'windows/stable','windows/runtime' | Out-Null
+          gh release download 'chk-serveur-pc-v1.0.4' --pattern 'CHK-SERVEUR-PC-UNIVERSEL-v1.0.4.exe' --dir 'windows/stable'
+          if ($LASTEXITCODE -ne 0) { throw 'Trusted stable v1.0.4 release unavailable' }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'validation/extract-stable-bridge.ps1' -ReleaseExe 'windows/stable/CHK-SERVEUR-PC-UNIVERSEL-v1.0.4.exe' -Destination 'windows/runtime/tailscale-bridge.exe'
+          if ($LASTEXITCODE -ne 0) { throw 'Stable Tailscale bridge extraction or integrity failed' }
+      - name: Construire llama.cpp CPU SSE4.2 sans AVX pour Celeron G1620
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $source=Join-Path $env:RUNNER_TEMP 'llama-cpp-source'
+          $build=Join-Path $env:RUNNER_TEMP 'llama-cpp-build'
+          git clone --depth 1 --branch b11898 https://github.com/ggml-org/llama.cpp.git $source
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned llama.cpp download failed' }
+          cmake -S $source -B $build -A x64 -DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_AVX_VNNI=OFF -DGGML_BMI2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF -DGGML_SSE42=ON -DGGML_CUDA=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_SERVER=ON
+          if ($LASTEXITCODE -ne 0) { throw 'llama.cpp configure failed' }
+          cmake --build $build --config Release --target llama-server --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw 'llama.cpp SSE4.2 build failed' }
+          $bin=Join-Path $build 'bin/Release'
+          if (!(Test-Path (Join-Path $bin 'llama-server.exe'))) { throw 'Actual llama-server.exe missing' }
+          New-Item -ItemType Directory -Force 'windows/runtime/ai' | Out-Null
+          Copy-Item (Join-Path $bin 'llama-server.exe') 'windows/runtime/ai/'
+          Copy-Item (Join-Path $bin '*.dll') 'windows/runtime/ai/' -ErrorAction Stop
+          & (Join-Path $bin 'llama-server.exe') --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Real Windows llama-server.exe smoke test failed' }
+          Write-Host 'llama.cpp SSE4.2 compiled without AVX/AVX2, no model downloaded or started'
+
       - name: Emballer Node, Tailscale et le MCP universel
         shell: pwsh
         run: |
@@ -86,7 +91,7 @@ jobs:
           $csc=Join-Path $env:WINDIR 'Microsoft.NET/Framework/v4.0.30319/csc.exe'
           if (!(Test-Path $csc)) { throw 'Windows native compiler missing' }
           New-Item -ItemType Directory -Force 'dist' | Out-Null
-          $exe=(Join-Path (Get-Location).Path 'dist/CHK-SERVEUR-PC-UNIVERSEL-v1.0.4.exe')
+          $exe=(Join-Path (Get-Location).Path 'dist/CHK-SERVEUR-PC-UNIVERSEL-v1.0.5.exe')
           $archive=(Join-Path (Get-Location).Path 'windows/runtime.zip')
           $source=(Resolve-Path 'windows/UniversalStarter.cs').Path
           if (!(Test-Path $source)) { throw 'Windows C# launcher file missing' }
@@ -104,12 +109,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Packaged Local 3 protocol verification failed' }
       - uses: actions/upload-artifact@v4
         with:
-          name: CHK-SERVEUR-PC-UNIVERSEL-Windows-v1.0.4
-          path: dist/CHK-SERVEUR-PC-UNIVERSEL-v1.0.4.exe
+          name: CHK-SERVEUR-PC-UNIVERSEL-Windows-v1.0.5
+          path: dist/CHK-SERVEUR-PC-UNIVERSEL-v1.0.5.exe
           if-no-files-found: error
           retention-days: 30
   release:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feature/local-ai-sse42-safe-20261028'
     needs: build-windows
     runs-on: ubuntu-latest
     permissions:
@@ -118,7 +123,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: CHK-SERVEUR-PC-UNIVERSEL-Windows-v1.0.4
+          name: CHK-SERVEUR-PC-UNIVERSEL-Windows-v1.0.5
           path: release
       - name: Publier le vrai programme Windows natif
         env:
@@ -127,11 +132,18 @@ jobs:
           GITHUB_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          test -s release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.4.exe
-          sha256sum release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.4.exe > release/SHA256SUMS.txt
-          TAG="chk-serveur-pc-v1.0.4"
+          test -s release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.5.exe
+          sha256sum release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.5.exe > release/SHA256SUMS.txt
+          TAG="chk-serveur-pc-v1.0.5"
+          EXTRA=()
+          TITLE="CHK SERVEUR PC UNIVERSEL 1.0.5"
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            TAG="chk-serveur-pc-v1.0.5-rc1"
+            TITLE="CHK SERVEUR PC UNIVERSEL 1.0.5 RC1 - TEST IA LOCALE"
+            EXTRA+=(--prerelease)
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.4.exe --clobber
+            gh release upload "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.5.exe release/SHA256SUMS.txt --clobber
           else
-            gh release create "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.4.exe release/SHA256SUMS.txt --target "$GITHUB_SHA" --title "CHK SERVEUR PC UNIVERSEL 1.0.4" --notes-file release-notes-1.0.4.md
+            gh release create "$TAG" release/CHK-SERVEUR-PC-UNIVERSEL-v1.0.5.exe release/SHA256SUMS.txt --target "$GITHUB_SHA" --title "$TITLE" --notes-file release-notes-1.0.5.md "${EXTRA[@]}"
           fi
