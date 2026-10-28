@@ -1,6 +1,6 @@
 {
   "name": "chk-serveur-universal-control",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "type": "module",
   "engines": {
@@ -10,7 +10,7 @@
     "start": "node src/server.mjs",
     "dev": "node --watch src/server.mjs",
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check src/autonomy.mjs && node --check src/browser-tools.mjs && node --check src/server.mjs && node --check src/mcp.mjs && node --check src/security.mjs && node --check src/core.mjs && node --check src/ai.mjs && node --check public/chat.js && node --check src/godot.mjs && node --check public/oauth-login.js && node --check src/crypto.mjs && node --check src/crypto-market.mjs && node --check src/crypto-monitor.mjs && node --check src/crypto-markets.mjs"
+    "check": "node --check src/autonomy.mjs && node --check src/browser-tools.mjs && node --check src/server.mjs && node --check src/mcp.mjs && node --check src/security.mjs && node --check src/core.mjs && node --check src/ai.mjs && node --check src/local-ai.mjs && node --check public/chat.js && node --check src/godot.mjs && node --check public/oauth-login.js && node --check src/crypto.mjs && node --check src/crypto-market.mjs && node --check src/crypto-monitor.mjs && node --check src/crypto-markets.mjs"
   },
   "license": "MIT"
 }
