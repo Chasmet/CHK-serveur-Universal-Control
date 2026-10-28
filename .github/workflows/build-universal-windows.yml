@@ -45,10 +45,24 @@ jobs:
         run: |
           go mod init chk-universal-tsbridge
           if ($LASTEXITCODE -ne 0) { throw 'go mod init failed' }
-          go get tailscale.com@v1.104.2
-          if ($LASTEXITCODE -ne 0) { throw 'Go dependency failed' }
-          go mod tidy
-          if ($LASTEXITCODE -ne 0) { throw 'Go tidy failed' }
+          # Keep Go checksum verification ON. Work around intermittent HTTP/2 checksum-service errors.
+          $env:GODEBUG='http2client=0'
+          $ok=$false
+          for ($attempt=1; $attempt -le 4; $attempt++) {
+            go get tailscale.com@v1.104.2
+            if ($LASTEXITCODE -eq 0) { $ok=$true; break }
+            Write-Warning "Go dependency transient failure ($attempt/4), retrying"
+            Start-Sleep -Seconds (3 * $attempt)
+          }
+          if (!$ok) { throw 'Go dependency failed after verified retries' }
+          $ok=$false
+          for ($attempt=1; $attempt -le 4; $attempt++) {
+            go mod tidy
+            if ($LASTEXITCODE -eq 0) { $ok=$true; break }
+            Write-Warning "Go checksum service transient failure ($attempt/4), retrying without disabling verification"
+            Start-Sleep -Seconds (3 * $attempt)
+          }
+          if (!$ok) { throw 'Go tidy failed after verified retries' }
           go test -v .
           if ($LASTEXITCODE -ne 0) { throw 'Tailscale bridge tests failed' }
           New-Item -ItemType Directory -Force '../runtime' | Out-Null
