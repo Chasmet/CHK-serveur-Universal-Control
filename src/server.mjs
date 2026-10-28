@@ -22,6 +22,9 @@ const baseConfig = () => ({
   legacyUrl: process.env.CHK_LEGACY_MCP_URL || "",
   ollamaUrl: process.env.OLLAMA_URL || "",
   ollamaModel: process.env.OLLAMA_MODEL || "qwen3:1.7b",
+  localAIUrl: process.env.LOCAL_AI_URL || "",
+  localAIModel: process.env.LOCAL_AI_MODEL || "chk-qwen-local",
+  localAIModelFile: process.env.LOCAL_AI_MODEL_FILE || "",
   allowLocalOAuth: process.env.ALLOW_LOCAL_OAUTH === "true"
 });
 async function readBody(req, limit = 32768) {
