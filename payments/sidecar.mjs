@@ -158,6 +158,10 @@ export async function buildPaymentSidecar(opts={}) {
       const bearer=String(req.headers.authorization||"").replace(/^Bearer /i,"");
       const device=await devices.authorize(bearer);
       if(!device) return result(res,401,{error:"owner_device_required"});
+      if(req.method==="DELETE"&&path==="/api/v1/device") {
+        await devices.revoke(device.id);
+        return result(res,200,{revoked:true});
+      }
       if(req.method==="GET"&&path==="/api/v1/activity") return result(res,200,{items:hub.getActivity().slice(0,100)});
       if(req.method==="GET"&&path==="/api/v1/review-queue") return result(res,200,{items:hub.getReviewQueue().slice(0,100)});
       if(req.method==="GET"&&path==="/api/v1/status") return result(res,200,{status:"ok",pending:hub.getReviewQueue().length});
