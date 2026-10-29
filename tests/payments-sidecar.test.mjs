@@ -64,7 +64,7 @@ test("Dedicated MCP exposes payments-only read tools and rejects writes",async t
   const init=await rpc("initialize",{});
   assert.equal(init.result.serverInfo.name,"CHK Paiements");
   const toolList=await rpc("tools/list",{});
-  assert.deepEqual(toolList.result.tools.map(x=>x.name),["payments_status","payments_activity","payments_review_queue"]);
+  assert.deepEqual(toolList.result.tools.map(x=>x.name),["payments_status","payments_activity","payments_summary","payments_review_queue"]);
   const status=await rpc("tools/call",{name:"payments_status",arguments:{}});
   assert.match(status.result.content[0].text,/"orders":0/);
   const bad=await rpc("tools/call",{name:"payments_review_order",arguments:{order_id:"123",decision:"approve"}});
