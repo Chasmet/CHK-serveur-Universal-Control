@@ -5,7 +5,9 @@ param([switch]$NoPairCode)
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $node = (Get-Command node.exe -ErrorAction Stop).Source
-$tailscale = (Get-Command tailscale.exe -ErrorAction Stop).Source
+$tailscaleCommand = Get-Command tailscale.exe -ErrorAction SilentlyContinue
+$tailscale = if ($tailscaleCommand) { $tailscaleCommand.Source } else { Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe' }
+if (-not (Test-Path $tailscale)) { throw 'Tailscale pour Windows est requis pour atteindre le port privé 8443.' }
 $version = & $node --version
 if ($LASTEXITCODE -ne 0 -or [int](($version -replace '^v','').Split('.')[0]) -lt 22) {
   throw 'Node.js version 22 ou supérieure nécessaire.'
@@ -31,7 +33,7 @@ try {
 if (-not $alreadyRunning) {
   $entry = Join-Path $root 'payments\sidecar.mjs'
   if (-not (Test-Path $entry)) { throw 'Module sidecar introuvable dans cette branche.' }
-  $proc = Start-Process -FilePath $node -ArgumentList @($entry) -WorkingDirectory $root -WindowStyle Hidden -PassThru
+  $proc = Start-Process -FilePath $node -ArgumentList @('"' + $entry + '"') -WorkingDirectory $root -WindowStyle Hidden -PassThru
   Start-Sleep -Seconds 3
   try {
     $health = Invoke-RestMethod -Uri $localHealth -TimeoutSec 7
@@ -69,4 +71,18 @@ if (-not $NoPairCode) {
   & $node (Join-Path $root 'payments\pair-code.mjs')
   if ($LASTEXITCODE -ne 0) { throw 'Impossible de générer un code d appairage.' }
 }
-Write-Host 'Pour la continuité après redémarrage, relancer ce script ou créer une tâche Windows dédiée.' -ForegroundColor Yellow
+# Tâche isolée, uniquement au prochain logon du propriétaire. Pas de modification de la tâche Universal Control.
+if (-not $NoPairCode) {
+  try {
+    $existingTask = Get-ScheduledTask -TaskName 'CHK-Paiements-Sidecar' -ErrorAction SilentlyContinue
+    if (-not $existingTask) {
+      $arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -NoPairCode'
+      $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments
+      $trigger = New-ScheduledTaskTrigger -AtLogOn -User ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
+      Register-ScheduledTask -TaskName 'CHK-Paiements-Sidecar' -Action $action -Trigger $trigger -Description 'Service paiement CHK indépendant du MCP universel' | Out-Null
+      Write-Host 'Démarrage automatique à la connexion Windows activé.' -ForegroundColor Green
+    }
+  } catch {
+    Write-Warning 'Démarrage au login non enregistré : relancer le script si le PC redémarre.'
+  }
+}
