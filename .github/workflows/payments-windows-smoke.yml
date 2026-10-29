@@ -1,0 +1,38 @@
+name: CHK Paiements — Validation Windows indépendante
+on:
+  push:
+    branches: ['feature/paiements-sync30']
+    paths:
+      - 'payments/**'
+      - 'tests/payments*.test.mjs'
+      - '.github/workflows/payments-windows-smoke.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Vérifier syntaxe PowerShell
+        shell: pwsh
+        run: |
+          $paths = @('payments/windows/start-chk-paiements.ps1')
+          foreach ($file in $paths) {
+            $tokens = $null
+            $errors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_ }
+              exit 1
+            }
+          }
+          Write-Output "PowerShell parser OK"
+      - name: Tester le service Paiements indépendant
+        shell: pwsh
+        run: |
+          node --check payments/sidecar.mjs
+          node --test tests/payments.test.mjs tests/payments-sidecar.test.mjs
