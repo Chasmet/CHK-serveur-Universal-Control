@@ -50,8 +50,11 @@ test("Pairing code is unique, owner access is revocable, no admin password on ph
   const auth=await request("/api/v1/activity",{token:device.device_token});
   assert.equal(auth.status,200);
   assert.deepEqual((await auth.json()).items,[]);
-  await devices.revoke(device.device_id);
+  const revoked=await request("/api/v1/device",{method:"DELETE",token:device.device_token});
+  assert.equal(revoked.status,200);
+  assert.equal((await revoked.json()).revoked,true);
   assert.equal((await request("/api/v1/activity",{token:device.device_token})).status,401);
+  assert.equal((await request("/api/v1/device",{method:"DELETE",token:device.device_token})).status,401);
 });
 
 test("Dedicated MCP exposes payments-only read tools and rejects writes",async t=>{
