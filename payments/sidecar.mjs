@@ -101,6 +101,7 @@ export async function buildPaymentSidecar(opts={}) {
   const mcpTools=[
     {name:"payments_status",description:"État de CHK Paiements et volumes, sans données bancaires",inputSchema:{type:"object",properties:{}}},
     {name:"payments_activity",description:"Liste des tentatives, paiements, refus et remboursements",inputSchema:{type:"object",properties:{}}},
+    {name:"payments_summary",description:"Classement des transactions et recettes confirmées par application et devise",inputSchema:{type:"object",properties:{}}},
     {name:"payments_review_queue",description:"Transactions déjà payées en attente de validation propriétaire",inputSchema:{type:"object",properties:{}}}
   ];
   const server=createServer(async(req,res)=>{
@@ -146,6 +147,7 @@ export async function buildPaymentSidecar(opts={}) {
           const name=rpc.params?.name;
           const data=name==="payments_status" ? {service:"CHK Paiements",orders:hub.getActivity().length,awaiting_review:hub.getReviewQueue().length} :
             name==="payments_activity" ? hub.getActivity().slice(0,100) :
+            name==="payments_summary" ? hub.getSummary() :
             name==="payments_review_queue" ? hub.getReviewQueue().slice(0,100) : null;
           if(data===null) return result(res,200,{jsonrpc:"2.0",id:rpc.id??null,error:{code:-32601,message:"Unknown or forbidden tool"}});
           return payload({content:[{type:"text",text:JSON.stringify(data)}]});
@@ -159,6 +161,7 @@ export async function buildPaymentSidecar(opts={}) {
       if(req.method==="GET"&&path==="/api/v1/activity") return result(res,200,{items:hub.getActivity().slice(0,100)});
       if(req.method==="GET"&&path==="/api/v1/review-queue") return result(res,200,{items:hub.getReviewQueue().slice(0,100)});
       if(req.method==="GET"&&path==="/api/v1/status") return result(res,200,{status:"ok",pending:hub.getReviewQueue().length});
+      if(req.method==="GET"&&path==="/api/v1/summary") return result(res,200,{items:hub.getSummary()});
       if(req.method==="POST"&&path==="/api/v1/reviews") {
         const body=await readJson(req);
         if(!["approve","deny"].includes(body.decision)) return result(res,400,{error:"invalid_decision"});
