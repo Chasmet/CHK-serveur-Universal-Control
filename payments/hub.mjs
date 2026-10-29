@@ -88,6 +88,7 @@ export class PaymentsHub {
       const id = randomUUID();
       const record = { id, app_id, sku, account_id, price_id: product.stripe_price_id,
         status: "creating", approval_status: product.review_mode === "owner" ? "awaiting_payment" : "not_required",
+        amount_cents: product.amount_cents, currency: product.currency,
         created_at: Date.now(), stripe_session: "", payment_intent: "" };
       state.orders[id] = record;
       return { ...record };
@@ -135,8 +136,8 @@ export class PaymentsHub {
         // The session must match the order created on our server.
         if (obj.client_reference_id !== matched.id) throw error("session_reference_mismatch");
         if (completed && obj.payment_status === "paid" && matched.status !== "refunded" && matched.status !== "disputed") {
-          if (obj.mode !== "payment" || obj.currency !== state.products[productKey(matched.app_id, matched.sku)]?.currency ||
-              obj.amount_total !== state.products[productKey(matched.app_id, matched.sku)]?.amount_cents) {
+          if (obj.mode !== "payment" || obj.currency !== matched.currency ||
+              obj.amount_total !== matched.amount_cents) {
             throw error("checkout_total_mismatch");
           }
           matched.status = "paid";
@@ -162,13 +163,37 @@ export class PaymentsHub {
 
   getReviewQueue() {
     return Object.values(this.state.orders).filter(o => o.status === "paid" && o.approval_status === "pending")
-      .map(o => ({ order_id: o.id, app_id: o.app_id, sku: o.sku, paid_at: o.paid_at, status: o.status }))
+      .map(o => ({ order_id: o.id, app_id: o.app_id, sku: o.sku, amount_cents: o.amount_cents,
+        currency: o.currency, paid_at: o.paid_at, status: o.status }))
       .sort((a, b) => (b.paid_at || 0) - (a.paid_at || 0));
+  }
+
+  getSummary() {
+    const groups = {};
+    for (const o of Object.values(this.state.orders)) {
+      const id = o.app_id + ":" + (o.currency || "unknown");
+      const summary = groups[id] ||= {
+        app_id: o.app_id, currency: o.currency || "unknown",
+        attempts: 0, confirmed: 0, failed: 0, refunds: 0,
+        disputes: 0, awaiting_review: 0, gross_confirmed_cents: 0
+      };
+      if (["creating", "pending"].includes(o.status)) summary.attempts++;
+      if (o.status === "failed" || o.status === "error") summary.failed++;
+      if (o.status === "refunded") summary.refunds++;
+      if (o.status === "disputed") summary.disputes++;
+      if (o.status === "paid") {
+        summary.confirmed++;
+        summary.gross_confirmed_cents += Number.isInteger(o.amount_cents) ? o.amount_cents : 0;
+        if (o.approval_status === "pending") summary.awaiting_review++;
+      }
+    }
+    return Object.values(groups).sort((a, b) => a.app_id.localeCompare(b.app_id));
   }
 
   getActivity() {
     return Object.values(this.state.orders).map(o => ({ order_id: o.id, app_id: o.app_id,
-      sku: o.sku, status: o.status, approval_status: o.approval_status, created_at: o.created_at,
+      sku: o.sku, amount_cents: o.amount_cents, currency: o.currency,
+      status: o.status, approval_status: o.approval_status, created_at: o.created_at,
       paid_at: o.paid_at || null })).sort((a, b) => b.created_at - a.created_at);
   }
 
