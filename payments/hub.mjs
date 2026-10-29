@@ -58,14 +58,15 @@ export class PaymentsHub {
   }
 
   async upsertProduct(input) {
-    const { app_id, sku, stripe_price_id, currency = "eur", amount_cents, active = true } = input || {};
+    const { app_id, sku, stripe_price_id, currency = "eur", amount_cents, active = true, review_mode = "automatic" } = input || {};
     if (!keyPattern.test(app_id || "") || !keyPattern.test(sku || "")) throw error("invalid_product_identity");
     if (!pricePattern.test(stripe_price_id || "")) throw error("invalid_stripe_price");
     if (typeof currency !== "string" || !/^[a-z]{3}$/.test(currency)) throw error("invalid_currency");
     if (!Number.isSafeInteger(amount_cents) || amount_cents < 50 || amount_cents > 100000000) throw error("invalid_amount");
     if (typeof active !== "boolean") throw error("invalid_status");
+    if (!["automatic", "owner"].includes(review_mode)) throw error("invalid_review_mode");
     return this.mutate(state => {
-      const product = { app_id, sku, stripe_price_id, currency, amount_cents, active, updated_at: Date.now() };
+      const product = { app_id, sku, stripe_price_id, currency, amount_cents, active, review_mode, updated_at: Date.now() };
       state.products[productKey(app_id, sku)] = product;
       return product;
     });
@@ -86,7 +87,8 @@ export class PaymentsHub {
     const order = await this.mutate(state => {
       const id = randomUUID();
       const record = { id, app_id, sku, account_id, price_id: product.stripe_price_id,
-        status: "creating", created_at: Date.now(), stripe_session: "", payment_intent: "" };
+        status: "creating", approval_status: product.review_mode === "owner" ? "awaiting_payment" : "not_required",
+        created_at: Date.now(), stripe_session: "", payment_intent: "" };
       state.orders[id] = record;
       return { ...record };
     });
@@ -133,9 +135,14 @@ export class PaymentsHub {
         // The session must match the order created on our server.
         if (obj.client_reference_id !== matched.id) throw error("session_reference_mismatch");
         if (completed && obj.payment_status === "paid" && matched.status !== "refunded" && matched.status !== "disputed") {
+          if (obj.mode !== "payment" || obj.currency !== state.products[productKey(matched.app_id, matched.sku)]?.currency ||
+              obj.amount_total !== state.products[productKey(matched.app_id, matched.sku)]?.amount_cents) {
+            throw error("checkout_total_mismatch");
+          }
           matched.status = "paid";
           matched.payment_intent = intentId(obj.payment_intent);
           matched.paid_at = Date.now();
+          if (matched.approval_status === "awaiting_payment") matched.approval_status = "pending";
         }
         if (failed && matched.status !== "paid") matched.status = "failed";
       } else if (reversed) {
@@ -153,10 +160,37 @@ export class PaymentsHub {
     });
   }
 
+  getReviewQueue() {
+    return Object.values(this.state.orders).filter(o => o.status === "paid" && o.approval_status === "pending")
+      .map(o => ({ order_id: o.id, app_id: o.app_id, sku: o.sku, paid_at: o.paid_at, status: o.status }))
+      .sort((a, b) => (b.paid_at || 0) - (a.paid_at || 0));
+  }
+
+  getActivity() {
+    return Object.values(this.state.orders).map(o => ({ order_id: o.id, app_id: o.app_id,
+      sku: o.sku, status: o.status, approval_status: o.approval_status, created_at: o.created_at,
+      paid_at: o.paid_at || null })).sort((a, b) => b.created_at - a.created_at);
+  }
+
+  async reviewPaidOrder({ order_id, decision, reviewer_id }) {
+    if (typeof order_id !== "string" || !/^[a-f0-9-]{36}$/.test(order_id)) throw error("invalid_order_id");
+    if (!["approve", "deny"].includes(decision)) throw error("invalid_review_decision");
+    if (!accountPattern.test(reviewer_id || "")) throw error("invalid_reviewer");
+    return this.mutate(state => {
+      const order = state.orders[order_id];
+      if (!order || order.status !== "paid" || order.approval_status !== "pending") throw error("order_not_reviewable");
+      order.approval_status = decision === "approve" ? "approved" : "denied";
+      order.reviewed_by = reviewer_id;
+      order.reviewed_at = Date.now();
+      return { order_id, approval_status: order.approval_status };
+    });
+  }
+
   getLicenses(app_id, account_id) {
     if (!keyPattern.test(app_id || "") || !accountPattern.test(account_id || "")) throw error("invalid_license_query");
     const orders = Object.values(this.state.orders).filter(o => o.app_id === app_id && o.account_id === account_id);
-    const active = [...new Set(orders.filter(o => o.status === "paid").map(o => o.sku))].sort();
+    const active = [...new Set(orders.filter(o => o.status === "paid" &&
+      ["approved", "not_required"].includes(o.approval_status)).map(o => o.sku))].sort();
     return { app_id, account_id, active_skus: active, checked_at: Date.now() };
   }
 }
