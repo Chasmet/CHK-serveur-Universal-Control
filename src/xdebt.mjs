@@ -131,7 +131,7 @@ export class XDebtService {
       const user = this.authenticated(req);
       if (path === "/me" && req.method === "GET")
         return json(res, 200, { profile: this.profile(user, true) });
-      if (path === "/me" && req.method === "PATCH") {
+      if (path === "/me" && (req.method === "PUT" || req.method === "PATCH")) {
         const display_name = trim(body.display_name ?? user.display_name, 60);
         const bio = trim(body.bio ?? user.bio, 500);
         if (display_name.length < 2) throw issue(400, "invalid_display_name");
