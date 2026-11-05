@@ -3,6 +3,7 @@ import { SERVER_VERSION } from "./version.mjs";
 import { createServer as httpServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { join, dirname } from "node:path";
 import { Store, clean, safeEqual } from "./core.mjs";
 import { createSecurity } from "./security.mjs";
 import { createAI } from "./ai.mjs";
@@ -12,6 +13,7 @@ import { createCryptoModule } from "./crypto.mjs";
 import { createMarketResearch } from "./crypto-markets.mjs";
 import { createCryptoMarket } from "./crypto-market.mjs";
 import { createCryptoMonitor } from "./crypto-monitor.mjs";
+import { XDebtService } from "./xdebt.mjs";
 
 const baseConfig = () => ({
   port: Number(process.env.PORT || 8787), host: process.env.HOST || "127.0.0.1",
@@ -19,6 +21,7 @@ const baseConfig = () => ({
   adminPassword: process.env.ADMIN_PASSWORD || "",
   jwtSecret: process.env.JWT_SECRET || "",
   file: process.env.DATA_FILE || "./data/server.json",
+  xdebtFile: process.env.XDEBT_DATA_FILE || "",
   legacyUrl: process.env.CHK_LEGACY_MCP_URL || "",
   ollamaUrl: process.env.OLLAMA_URL || "",
   ollamaModel: process.env.OLLAMA_MODEL || "qwen3:1.7b",
@@ -49,6 +52,7 @@ export async function buildServer(opts = {}) {
   const markets = createMarketResearch();
   const advancedMarket = createCryptoMarket();
   const monitor = createCryptoMonitor(store, crypto);
+  const xdebt = await new XDebtService(config.xdebtFile || join(dirname(config.file), "xdebt.json")).init();
   const loginFailures = new Map();
   async function legacyCall(tool, args) {
     if (!config.legacyUrl) throw Error("legacy_not_configured");
@@ -112,8 +116,9 @@ export async function buildServer(opts = {}) {
         res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });
         return res.end(await readFile(fileURLToPath(new URL("../public/chat.js", import.meta.url)), "utf8"));
       }
-      const body = ["POST", "PUT"].includes(req.method) ? await readBody(req, /^\/api\/agent\/[a-f0-9-]{36}\/result$/.test(url.pathname) ? 350000
+      const body = ["POST", "PUT", "PATCH"].includes(req.method) ? await readBody(req, url.pathname.startsWith("/xdebt/api/") ? 180000 : /^\/api\/agent\/[a-f0-9-]{36}\/result$/.test(url.pathname) ? 350000
         : ["/mcp", "/api/tasks"].includes(url.pathname) ? 100000 : 32768) : {};
+      if (url.pathname.startsWith("/xdebt/api/")) return xdebt.handle(req, res, url, body, json);
       const oauth = await security.route(req, res, url, body);
       if (oauth !== false) return;
       if (req.method === "POST" && url.pathname === "/api/login") {
