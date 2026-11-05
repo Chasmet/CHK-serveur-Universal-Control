@@ -3,6 +3,7 @@ import { SERVER_VERSION } from "./version.mjs";
 import { createServer as httpServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { join, dirname } from "node:path";
 import { Store, clean, safeEqual } from "./core.mjs";
 import { createSecurity } from "./security.mjs";
 import { createAI } from "./ai.mjs";
@@ -20,7 +21,7 @@ const baseConfig = () => ({
   adminPassword: process.env.ADMIN_PASSWORD || "",
   jwtSecret: process.env.JWT_SECRET || "",
   file: process.env.DATA_FILE || "./data/server.json",
-  xdebtFile: process.env.XDEBT_DATA_FILE || "./data/xdebt.json",
+  xdebtFile: process.env.XDEBT_DATA_FILE || "",
   legacyUrl: process.env.CHK_LEGACY_MCP_URL || "",
   ollamaUrl: process.env.OLLAMA_URL || "",
   ollamaModel: process.env.OLLAMA_MODEL || "qwen3:1.7b",
@@ -51,7 +52,7 @@ export async function buildServer(opts = {}) {
   const markets = createMarketResearch();
   const advancedMarket = createCryptoMarket();
   const monitor = createCryptoMonitor(store, crypto);
-  const xdebt = await new XDebtService(config.xdebtFile).init();
+  const xdebt = await new XDebtService(config.xdebtFile || join(dirname(config.file), "xdebt.json")).init();
   const loginFailures = new Map();
   async function legacyCall(tool, args) {
     if (!config.legacyUrl) throw Error("legacy_not_configured");
