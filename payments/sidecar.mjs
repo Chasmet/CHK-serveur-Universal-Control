@@ -22,9 +22,9 @@ const readRaw = async (req, limit=262144) => {
   for await (const part of req) {size+=part.length; if(size>limit) throw Error("body_too_large"); chunks.push(part);}
   return Buffer.concat(chunks);
 };
-const readJson = async req => {
+const readJson = async (req, limit=262144) => {
   if(!String(req.headers["content-type"]||"").includes("application/json")) throw Error("json_required");
-  return JSON.parse((await readRaw(req)).toString("utf8"));
+  return JSON.parse((await readRaw(req,limit)).toString("utf8"));
 };
 
 export class DeviceRegistry {
@@ -91,6 +91,8 @@ export async function buildPaymentSidecar(opts={}) {
     host:"127.0.0.1", // NEVER bind publicly directly
     dataFile:process.env.PAYMENTS_DATA_FILE||"./data/payments-orders.json",
     devicesFile:process.env.PAYMENTS_DEVICES_FILE||"./data/payment-devices.json",
+    playIpRatePerMinute:Number(process.env.CHK_PLAY_IP_RATE_PER_MINUTE||120),
+    playTokenRatePerMinute:Number(process.env.CHK_PLAY_TOKEN_RATE_PER_MINUTE||12),
     webhookSecret:process.env.STRIPE_PAYMENTS_WEBHOOK_SECRET||"",
     mcpReadToken:process.env.PAYMENTS_MCP_READ_TOKEN||"",
     ...opts
@@ -100,6 +102,21 @@ export async function buildPaymentSidecar(opts={}) {
   const devices=new DeviceRegistry(config.devicesFile);
   const playVerifier = config.playVerifier || new GooglePlayVerifier();
   const fails=new Map();
+  const playThrottle=new Map();
+  function allowPlayCheck(key, limit) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100000) return false;
+    const now=Date.now(), win=Math.floor(now/60000);
+    const item=playThrottle.get(key);
+    if (playThrottle.size > 4096) {
+      for (const [k,v] of playThrottle) if (v.window !== win) playThrottle.delete(k);
+      if (playThrottle.size > 8192) playThrottle.clear(); // Mémoire bornée, proxy doit aussi limiter.
+    }
+    if (item && item.window===win) {
+      if (item.count>=limit) return false;
+      item.count++;
+    } else playThrottle.set(key,{window:win,count:1});
+    return true;
+  }
   const mcpTools=[
     {name:"payments_status",description:"État de CHK Paiements et volumes, sans données bancaires",inputSchema:{type:"object",properties:{}}},
     {name:"payments_activity",description:"Liste des tentatives, paiements, refus et remboursements",inputSchema:{type:"object",properties:{}}},
@@ -126,10 +143,17 @@ export async function buildPaymentSidecar(opts={}) {
         return result(res,200,{ok:true,billingReady:ready,service:"CHK Paiements - Google Play"});
       }
       if(req.method==="POST" && path==="/api/v1/play/verify") {
-        // Le purchaseToken Google Play sert de preuve ; aucun secret Google dans les APK.
-        if(Number(req.headers["content-length"]||0) > 10000)
+        // Le sidecar reste en loopback, la passerelle publique doit limiter aussi.
+        const source=req.socket.remoteAddress||"unknown";
+        if (!allowPlayCheck("ip:"+source,config.playIpRatePerMinute))
+          return result(res,429,{error:"play_rate_limited"});
+        if(Number(req.headers["content-length"]||0)>8192)
           return result(res,413,{error:"payload_too_large"});
-        const body = await readJson(req);
+        const body = await readJson(req,8192); // couvre aussi les requêtes chunked.
+        const token=body?.purchaseToken;
+        const fingerprint=typeof token==="string" ? sha(token) : "invalid";
+        if(!allowPlayCheck("token:"+fingerprint,config.playTokenRatePerMinute))
+          return result(res,429,{error:"play_token_rate_limited"});
         const checked = await playVerifier.verify(body);
         if(checked.verified) {
           await hub.recordVerifiedGooglePlayPurchase(checked);
