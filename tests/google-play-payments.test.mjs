@@ -41,7 +41,7 @@ test("validation côté Google : acheté oui, pending/non correspondant non",asy
     assert.equal(opt.headers.authorization,"Bearer token_test_google_play_12345");
     return {ok:true,status:200,json:async()=>({
       purchaseStateContext:{purchaseState:state},
-      productLineItem:[{productId,consumptionState:"CONSUMPTION_STATE_YET_TO_BE_CONSUMED"}],
+      productLineItem:[{productId,productOfferDetails:{consumptionState:"CONSUMPTION_STATE_YET_TO_BE_CONSUMED"}}],
       acknowledgementState:"ACKNOWLEDGEMENT_STATE_PENDING"
     })};
   };
