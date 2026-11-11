@@ -15,10 +15,10 @@ Les routes d'administration CHK Paiements, Stripe, /mcp, /api/v1/activity et /ap
 3. Lancer ou mettre à jour le sidecar CHK Paiements privé sur 127.0.0.1:8791.
 4. Vérifier que http://127.0.0.1:8791/api/v1/play/health renvoie ok=true et billingReady=true. Cela prouve seulement la connexion aux jetons Google, pas encore le bon fonctionnement de la vente.
 5. Depuis un terminal PowerShell du PC, lancer le script payments/windows/start-google-play-funnel.ps1 sans argument. Il démarre uniquement la passerelle **locale** en 8792.
-6. Vérifier que Tailscale Funnel est autorisé par l'administrateur du tailnet, que le port HTTPS 8443 est libre et que le serveur Windows permet son activation. **Ne jamais utiliser 443**, déjà réservé au MCP universel.
-7. Uniquement après vérification, activer volontairement le script avec l'argument -ExposeFunnel. Ceci exécute la commande de Tailscale pour exposer HTTPS 8443 vers la passerelle locale 8792.
-8. Depuis une connexion Internet hors Tailscale, vérifier https://VOTRE_NOEUD.VOTRE_TAILNET.ts.net:8443/api/v1/play/health ; ce chemin doit renvoyer ok=true, billingReady=true. Tester /mcp et /api/v1/activity : 404 obligatoire.
-9. Dans GitHub Actions pour Bloc-note, définir BLOCNOTE_CHK_PAYMENTS_VERIFY_URL=https://VOTRE_NOEUD.VOTRE_TAILNET.ts.net:8443/api/v1/play/verify. Ne jamais ajouter le JSON de compte de service dans GitHub public ou dans l'APK.
+6. Vérifier que Tailscale Funnel est autorisé par l'administrateur du tailnet, que le port HTTPS 10000 est libre et que le serveur Windows permet son activation. **Ne jamais utiliser 443**, réservé au MCP universel, ni **8443**, déjà réservé au CHK Paiements privé via Tailscale Serve.
+7. Uniquement après vérification, activer volontairement le script avec l'argument -ExposeFunnel. Ceci exécute la commande de Tailscale pour exposer HTTPS 10000 vers la passerelle locale 8792.
+8. Depuis une connexion Internet hors Tailscale, vérifier https://VOTRE_NOEUD.VOTRE_TAILNET.ts.net:10000/api/v1/play/health ; ce chemin doit renvoyer ok=true, billingReady=true. Tester /mcp et /api/v1/activity : 404 obligatoire.
+9. Dans GitHub Actions pour Bloc-note, définir BLOCNOTE_CHK_PAYMENTS_VERIFY_URL=https://VOTRE_NOEUD.VOTRE_TAILNET.ts.net:10000/api/v1/play/verify. Ne jamais ajouter le JSON de compte de service dans GitHub public ou dans l'APK.
 10. Préparer un AAB signé propre à com.chk.blocnote, activer le produit blocnote_premium_lifetime à 1,19 EUR dans Google Play Console, vérifier l'achat et sa restauration sur une piste de test interne avant vente.
 
 ## Risques à traiter
@@ -28,3 +28,5 @@ Les routes d'administration CHK Paiements, Stripe, /mcp, /api/v1/activity et /ap
 - Contrôler les versions de Tailscale et la politique Funnel du tailnet, sans écraser les autres règles d'accès du PC. La commande -ExposeFunnel crée une véritable entrée publique sur Internet.
 
 Sources : https://tailscale.com/docs/reference/tailscale-cli/funnel et https://tailscale.com/docs/features/tailscale-funnel
+
+**Port corrigé le 11/11/2026 :** la commande publique Funnel utilise exclusivement HTTPS 10000, afin de ne jamais rendre public le port 8443 du CHK Paiements privé (et de ne jamais toucher à 443 du MCP). Le script refuse tout port externe différent.

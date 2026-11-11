@@ -1,7 +1,7 @@
-param([switch]$ExposeFunnel, [int]$ExternalHttpsPort=8443, [int]$GatewayPort=8792)
+param([switch]$ExposeFunnel, [int]$ExternalHttpsPort=10000, [int]$GatewayPort=8792)
 $ErrorActionPreference="Stop"
 $Script=Join-Path (Split-Path -Parent $PSScriptRoot) "public-play-gateway.mjs"
-if($ExternalHttpsPort -notin @(8443,10000)){throw "Ne pas modifier 443 : il appartient au MCP universel."}
+if($ExternalHttpsPort -ne 10000){throw "Port public fixe 10000 : 443 est le MCP universel et 8443 appartient à CHK Paiements privé."}
 if(-not (Get-Command node -ErrorAction SilentlyContinue)){throw "Node.js 22 requis"}
 if(-not (Test-Path $Script)){throw "Module gateway absent"}
 try {
@@ -28,7 +28,23 @@ if(-not $ExposeFunnel){
   exit
 }
 if(-not(Get-Command tailscale -ErrorAction SilentlyContinue)){throw "Tailscale requis"}
+# Ne jamais prendre un port configuré pour Serve privé ni pour un autre Funnel.
+$serveRaw = & tailscale serve status --json 2>&1
+if($LASTEXITCODE -ne 0){throw "Impossible d'inspecter les ports Tailscale existants. Aucun Funnel activé."}
+$serveText = ($serveRaw | Out-String)
+$serveConfig = $serveText | ConvertFrom-Json
+if($serveConfig.Web){
+  foreach($entry in $serveConfig.Web.PSObject.Properties){
+    if($entry.Name -match '(^|:)10000
 tailscale funnel status
-Write-Host "Ce port devient PUBLIC sur Internet. Ne jamais exposer le sidecar 8791."
-tailscale funnel --bg --https=$ExternalHttpsPort "http://127.0.0.1:$GatewayPort"
+){
+      throw "Port HTTPS 10000 déjà utilisé par Tailscale Serve/Funnel. Arrêt de sécurité : aucune modification."
+    }
+  }
+}
+$statuses = & tailscale funnel status 2>&1
+Write-Host "Le port 10000 devient PUBLIC sur Internet, uniquement pour la vérification Google Play."
+Write-Host "Les ports existants 443 (MCP) et 8443 (Paiements privé) restent inchangés."
+tailscale funnel --bg --https=10000 "http://127.0.0.1:$GatewayPort"
+if($LASTEXITCODE -ne 0){throw "Tailscale a refusé Funnel 10000"}
 tailscale funnel status
