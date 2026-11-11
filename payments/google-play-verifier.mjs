@@ -100,7 +100,7 @@ export class GooglePlayVerifier {
     const purchased = item.purchaseStateContext?.purchaseState === "PURCHASED";
     const correct = Array.isArray(item.productLineItem)
       && item.productLineItem.some(x => x.productId === productId
-          && x.consumptionState !== "CONSUMPTION_STATE_CONSUMED");
+          && x.productOfferDetails?.consumptionState !== "CONSUMPTION_STATE_CONSUMED");
     const valid = purchased && correct;
     return {
       verified:valid, packageName, productId, tokenHash:sha(purchaseToken),
