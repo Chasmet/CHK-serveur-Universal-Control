@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 // Strictly local proxy for the public Tailscale Funnel edge.
 // Never forwards MCP, Stripe, pairing, owner admin, or arbitrary routes.
@@ -90,7 +92,7 @@ export function buildPublicPlayGateway(opts={}){
   server.requestTimeout=16000;server.headersTimeout=12000;
   return {server,config:{host,port,upstream}};
 }
-if(process.argv[1]&&import.meta.url===new URL("file://"+process.argv[1]).href){
+if(process.argv[1]&&fileURLToPath(import.meta.url)===resolve(process.argv[1])){
   const {server,config}=buildPublicPlayGateway();
   server.listen(config.port,config.host,()=>console.log("Google Play gateway local: "+config.port));
 }
