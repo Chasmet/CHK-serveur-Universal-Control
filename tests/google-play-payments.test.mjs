@@ -29,6 +29,7 @@ test("validation côté Google : acheté oui, pending/non correspondant non",asy
   };
   let state="PURCHASED";
   let productId="blocnote_premium_lifetime";
+  let consumption="CONSUMPTION_STATE_YET_TO_BE_CONSUMED";
   let oauthCount=0;
   const fetchFn=async(url,opt)=>{
     if(url.includes("oauth2.googleapis.com")){
@@ -41,7 +42,7 @@ test("validation côté Google : acheté oui, pending/non correspondant non",asy
     assert.equal(opt.headers.authorization,"Bearer token_test_google_play_12345");
     return {ok:true,status:200,json:async()=>({
       purchaseStateContext:{purchaseState:state},
-      productLineItem:[{productId,productOfferDetails:{consumptionState:"CONSUMPTION_STATE_YET_TO_BE_CONSUMED"}}],
+      productLineItem:[{productId,productOfferDetails:{consumptionState:consumption}}],
       acknowledgementState:"ACKNOWLEDGEMENT_STATE_PENDING"
     })};
   };
@@ -56,6 +57,8 @@ test("validation côté Google : acheté oui, pending/non correspondant non",asy
   state="PENDING";
   assert.equal((await verifier.verify(valid)).verified,false);
   state="PURCHASED";productId="other";
+  assert.equal((await verifier.verify(valid)).verified,false);
+  productId="blocnote_premium_lifetime";consumption="CONSUMPTION_STATE_CONSUMED";
   assert.equal((await verifier.verify(valid)).verified,false);
   await assert.rejects(()=>verifier.verify({...valid,productId:"rush_premium"}),/invalid_product/);
   await assert.rejects(()=>verifier.verify({...valid,packageName:"com.unknown.app"}),/invalid_product/);
