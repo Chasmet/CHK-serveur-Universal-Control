@@ -190,6 +190,42 @@ export class PaymentsHub {
     return Object.values(groups).sort((a, b) => a.app_id.localeCompare(b.app_id));
   }
 
+  /**
+   * Enregistrer seulement les informations certifiées par Google.
+   * Aucun montant n'est inventé : le prix en France et en devises étrangères
+   * n'est pas fourni ici par l'API de vérification.
+   */
+  async recordVerifiedGooglePlayPurchase(check) {
+    const tokenHash = check?.tokenHash;
+    const stateCode = check?.state;
+    if (!/^[a-f0-9]{64}$/.test(tokenHash || "")) throw error("invalid_google_token_hash");
+    if (check.packageName !== "com.chk.blocnote" && check.packageName !== "com.chk.rushstudio")
+      throw error("invalid_google_package");
+    if (!["PURCHASED","CANCELLED"].includes(stateCode)) throw error("invalid_google_purchase_state");
+    const id = "gplay_" + tokenHash.slice(0, 40);
+    return this.mutate(state => {
+      const old = state.orders[id];
+      if (!check.verified && !old) return {ignored:true};
+      if (old && (old.app_id !== check.packageName || old.sku !== check.productId))
+        throw error("invalid_google_token_reuse");
+      const next = old || {
+        id, app_id:check.packageName, sku:check.productId,
+        account_id:"google_play_unlinked", provider:"google_play",
+        amount_cents:null,currency:"unknown", created_at:Date.now(),
+        approval_status:"not_required"
+      };
+      next.status = check.verified ? "paid" : "refunded";
+      if (check.verified) {
+        if (!next.paid_at) next.paid_at = Date.now();
+        delete next.revoked_at;
+      } else next.revoked_at = Date.now();
+      if (check.orderId) next.provider_order_id = check.orderId;
+      next.last_verified_at = Date.now();
+      state.orders[id] = next;
+      return {recorded:true,order_id:id};
+    });
+  }
+
   getActivity() {
     return Object.values(this.state.orders).map(o => ({ order_id: o.id, app_id: o.app_id,
       sku: o.sku, amount_cents: o.amount_cents, currency: o.currency,

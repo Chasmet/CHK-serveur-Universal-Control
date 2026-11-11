@@ -4,6 +4,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PaymentsHub, verifyStripeSignature } from "./hub.mjs";
+import { GooglePlayVerifier } from "./google-play-verifier.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const compare = (a,b) => {
@@ -97,6 +98,7 @@ export async function buildPaymentSidecar(opts={}) {
   if(config.host!=="127.0.0.1" && config.host!=="::1") throw Error("loopback_only");
   const hub=await new PaymentsHub(config.dataFile).init();
   const devices=new DeviceRegistry(config.devicesFile);
+  const playVerifier = config.playVerifier || new GooglePlayVerifier();
   const fails=new Map();
   const mcpTools=[
     {name:"payments_status",description:"État de CHK Paiements et volumes, sans données bancaires",inputSchema:{type:"object",properties:{}}},
@@ -117,6 +119,26 @@ export async function buildPaymentSidecar(opts={}) {
         const event=JSON.parse(raw.toString("utf8"));
         const accepted=await hub.acceptVerifiedStripeEvent(event);
         return result(res,200,{received:true,duplicate:accepted.duplicate});
+      }
+      // API publique uniquement via passerelle HTTPS distincte. CHK Universal Control /mcp intact.
+      if(req.method==="GET" && path==="/api/v1/play/health") {
+        const ready = await playVerifier.ready();
+        return result(res,200,{ok:true,billingReady:ready,service:"CHK Paiements - Google Play"});
+      }
+      if(req.method==="POST" && path==="/api/v1/play/verify") {
+        // Le purchaseToken Google Play sert de preuve ; aucun secret Google dans les APK.
+        if(Number(req.headers["content-length"]||0) > 10000)
+          return result(res,413,{error:"payload_too_large"});
+        const body = await readJson(req);
+        const checked = await playVerifier.verify(body);
+        if(checked.verified) {
+          await hub.recordVerifiedGooglePlayPurchase(checked);
+        } else if(checked.state==="CANCELLED") {
+          await hub.recordVerifiedGooglePlayPurchase(checked);
+        }
+        return result(res,checked.verified ? 200 : 403,{
+          verified:checked.verified,packageName:checked.packageName,productId:checked.productId
+        });
       }
       if(req.method==="POST" && path==="/api/v1/pair") {
         const source=req.socket.remoteAddress||"unknown",entry=fails.get(source)||{attempts:0,expires:0};
@@ -180,7 +202,7 @@ export async function buildPaymentSidecar(opts={}) {
   });
   server.requestTimeout=30000;
   server.headersTimeout=12000;
-  return {server,hub,devices,config};
+  return {server,hub,devices,playVerifier,config};
 }
 
 if(process.argv[1] && fileURLToPath(import.meta.url)===process.argv[1]) {
