@@ -10,7 +10,10 @@ try {
 if($health.billingReady -ne $true){throw "Google Play Service Account non configure, impossible d'exposer"}
 if(Get-NetTCPConnection -LocalPort $GatewayPort -State Listen -ErrorAction SilentlyContinue){
   throw "Port $GatewayPort deja occupe"}
-$process=Start-Process -FilePath (Get-Command node).Source -ArgumentList @($Script) -PassThru -WindowStyle Hidden -Environment @{CHK_PLAY_GATEWAY_PORT="$GatewayPort"}
+$env:CHK_PLAY_GATEWAY_PORT="$GatewayPort"
+try {
+  $process=Start-Process -FilePath (Get-Command node).Source -ArgumentList @($Script) -PassThru -WindowStyle Hidden
+} finally {Remove-Item Env:CHK_PLAY_GATEWAY_PORT -ErrorAction SilentlyContinue}
 Start-Sleep -Seconds 2
 try {
   $status=Invoke-RestMethod -Uri "http://127.0.0.1:$GatewayPort/api/v1/play/health" -TimeoutSec 5
