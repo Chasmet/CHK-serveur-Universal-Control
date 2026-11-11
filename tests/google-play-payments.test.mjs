@@ -117,3 +117,57 @@ test("CHK Paiements : health, achat vérifié, idempotence, remboursement, aucun
   assert.equal(hub.getSummary()[0].refunds,1);
   assert.equal((await fetch(base+"/api/v1/activity")).status,401);
 });
+
+async function setupRateLimitedPlay(t,limits) {
+  const dir=await mkdtemp(join(tmpdir(),"chk-google-play-throttle-"));
+  const {server}=await buildPaymentSidecar({
+    host:"127.0.0.1",port:0,
+    dataFile:join(dir,"orders.json"),devicesFile:join(dir,"devices.json"),
+    playVerifier:{
+      async ready(){return true;},
+      async verify(x){return {
+        verified:true,state:"PURCHASED",tokenHash:hash(x.purchaseToken),
+        packageName:x.packageName,productId:x.productId,orderId:"GPA.test.limit"
+      };}
+    },
+    ...limits
+  });
+  await new Promise(resolve=>server.listen(0,"127.0.0.1",resolve));
+  t.after(async()=>{await new Promise(resolve=>server.close(resolve));await rm(dir,{recursive:true,force:true});});
+  const url="http://127.0.0.1:"+server.address().port+"/api/v1/play/verify";
+  const verify=(tkn=token,extra={})=>fetch(url,{
+    method:"POST",
+    headers:{"content-type":"application/json",...extra},
+    body:JSON.stringify({...valid,purchaseToken:tkn})
+  });
+  return {verify,url};
+}
+
+test("CHK Paiements stoppe les relectures abusives d'un même jeton",async t=>{
+  const {verify}=await setupRateLimitedPlay(t,{playIpRatePerMinute:10,playTokenRatePerMinute:2});
+  assert.equal((await verify()).status,200);
+  assert.equal((await verify()).status,200);
+  const third=await verify();
+  assert.equal(third.status,429);
+  assert.equal((await third.json()).error,"play_token_rate_limited");
+});
+
+test("CHK Paiements limite toutes les requêtes Google Play par connexion",async t=>{
+  const {verify}=await setupRateLimitedPlay(t,{playIpRatePerMinute:2,playTokenRatePerMinute:10});
+  assert.equal((await verify(token+"A")).status,200);
+  assert.equal((await verify(token+"B")).status,200);
+  const third=await verify(token+"C",{"x-forwarded-for":"8.8.8.8"});
+  assert.equal(third.status,429);
+  assert.equal((await third.json()).error,"play_rate_limited");
+});
+
+test("CHK Paiements refuse un JSON Play trop volumineux, même sans token valide",async t=>{
+  const {url}=await setupRateLimitedPlay(t,{playIpRatePerMinute:10,playTokenRatePerMinute:10});
+  const huge={...valid,fill:"X".repeat(9000)};
+  const response=await fetch(url,{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify(huge)
+  });
+  assert.equal(response.status,413);
+  assert.equal((await response.json()).error,"payload_too_large");
+});
