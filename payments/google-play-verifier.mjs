@@ -7,6 +7,7 @@ import { createHash, createSign } from "node:crypto";
  */
 const ALLOWED = Object.freeze({
   "com.chk.blocnote": "blocnote_premium_lifetime",
+  "com.sync30.mesnotesdossiers": "blocnote_premium_lifetime",
   "com.chk.rushstudio": "rush_premium"
 });
 const sha = s => createHash("sha256").update(s, "utf8").digest("hex");
