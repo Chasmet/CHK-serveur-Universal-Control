@@ -11,6 +11,7 @@ const send=(res,status,obj)=>{
   res.end(JSON.stringify(obj));
 };
 const hash=s=>createHash("sha256").update(s).digest("hex");
+const ALLOWED_NOTE_PACKAGES=new Set(["com.chk.blocnote","com.sync30.mesnotesdossiers"]);
 const readBody=async(req,limit)=>{
   let bytes=0,parts=[];
   for await(const part of req){
@@ -46,17 +47,18 @@ export function buildPublicPlayGateway(opts={}){
     if(req.headers["content-encoding"])return send(res,415,{error:"encoding_forbidden"});
     if(verify&&!String(req.headers["content-type"]||"").startsWith("application/json"))
       return send(res,415,{error:"json_required"});
-    let body;
+    let body, requestedPackage="";
     if(verify){
       try{
         const input=JSON.parse(await readBody(req,8192));
-        if(input?.packageName!=="com.chk.blocnote" ||
+        if(!ALLOWED_NOTE_PACKAGES.has(input?.packageName) ||
            input?.productId!=="blocnote_premium_lifetime" ||
            typeof input?.purchaseToken!=="string" ||
            input.purchaseToken.length<20 || input.purchaseToken.length>4096)
           return send(res,400,{error:"invalid_purchase"});
         if(!limit("token:"+hash(input.purchaseToken),12))
           return send(res,429,{error:"token_rate_limited"});
+        requestedPackage=input.packageName;
         body=JSON.stringify({packageName:input.packageName,
           productId:input.productId,purchaseToken:input.purchaseToken});
       }catch(e){return send(res,e.message==="too_large"?413:400,
@@ -76,7 +78,7 @@ export function buildPublicPlayGateway(opts={}){
       const data=JSON.parse(raw);
       if(health)return send(res,200,{ok:true,billingReady:
         reply.status===200&&data?.ok===true&&data?.billingReady===true});
-      if(data?.packageName!=="com.chk.blocnote"||
+      if(data?.packageName!==requestedPackage||
          data?.productId!=="blocnote_premium_lifetime"||
          typeof data?.verified!=="boolean")
          return send(res,503,{error:"upstream_invalid"});
