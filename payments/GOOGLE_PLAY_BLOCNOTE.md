@@ -31,3 +31,12 @@ Ce module complète le sidecar CHK Paiements, sans remplacer le MCP universel, s
 - Pas de monitoring Play RTDN ni Voided Purchases en temps réel ; l'application revalide les tokens en ouverture/restauration.
 - Pas de garantie d'essai unique par compte Google : le compteur d'essai de 24h est local et une réinstallation peut le réinitialiser.
 - Pas de vraie commande de 1,19 € testée pour `com.chk.blocnote` ; vérifier produit, tarifs, signature et permissions API sur la piste interne.
+
+
+## Correctif public Sync 30 — 13/11/2026 (état plus récent)
+- **Nouveau package Play** : `com.sync30.mesnotesdossiers` (la version personnelle reste `com.chk.blocnote` ; les deux packages sont distincts).
+- Le vérificateur Google Play `google-play-verifier.mjs` acceptait déjà les deux, mais **la passerelle publique** `public-play-gateway.mjs` filtrait à tort uniquement `com.chk.blocnote`, empêchant la vente du package public.
+- Correctif sur cette BRANCHE uniquement : passerelle autorise les DEUX packages pour `blocnote_premium_lifetime`, vérifie que `data.packageName === packageName` de la requête et refuse un retour « verified » concernant l'autre application. Commit `de0d45325d66c112625ae38acb4ef5c14e506910`, tests régression `173a93816e59b1536b6c70bd9b4d2b857795694d`.
+- CI serveur SUCCESS [43382142668](https://github.com/Chasmet/CHK-serveur-Universal-Control/actions/runs/43382142668). **Pas de déploiement Windows confirmé**, Google Play Developer API/OAuth et HTTPS Funnel toujours à vérifier, achat réel/restauration/remboursement non testés.
+- Côté application Android : la clé JKS upload est créée ; 4 GitHub Secrets de signature présents, AAB **QA interne signé sans paiement** construit avec succès : [43381391961](https://github.com/Chasmet/Bloc-note/actions/runs/43381391961). NE PAS confondre ce bundle QA avec un bundle commercial.
+- Ne pas exposer MCP, Stripe ou ports propriétaires, ne pas créer de service Render. Pour la version commerciale, activer le sidecar existant en privé, tester `/health` et `/verify` avec autorisations Google vérifiées, puis renseigner `BLOCNOTE_CHK_PAYMENTS_VERIFY_URL` dans les Secrets GitHub Android.
