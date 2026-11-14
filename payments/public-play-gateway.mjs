@@ -23,7 +23,7 @@ const readBody=async(req,limit)=>{
 };
 export function buildPublicPlayGateway(opts={}){
   const host=opts.host||"127.0.0.1",port=opts.port??Number(process.env.CHK_PLAY_GATEWAY_PORT||8792);
-  const upstream=opts.upstream||"http://127.0.0.1:8791";
+  const upstream=opts.upstream||process.env.CHK_PLAY_UPSTREAM||"http://127.0.0.1:8791";
   const request=opts.fetchFn||fetch, now=opts.now||Date.now, hit=new Map();
   if(host!=="127.0.0.1"&&host!=="::1")throw Error("gateway_must_be_loopback_only");
   const u=new URL(upstream);

@@ -1,19 +1,25 @@
-param([switch]$ExposeFunnel, [int]$ExternalHttpsPort=10000, [int]$GatewayPort=8792)
+param(
+  [switch]$ExposeFunnel,
+  [int]$ExternalHttpsPort=10000,
+  [int]$GatewayPort=8792,
+  [ValidateRange(1,65535)][int]$PaymentsPort=8795
+)
 $ErrorActionPreference="Stop"
 $Script=Join-Path (Split-Path -Parent $PSScriptRoot) "public-play-gateway.mjs"
 if($ExternalHttpsPort -ne 10000){throw "Port public fixe 10000 : 443 est le MCP universel et 8443 appartient à CHK Paiements privé."}
 if(-not (Get-Command node -ErrorAction SilentlyContinue)){throw "Node.js 22 requis"}
 if(-not (Test-Path $Script)){throw "Module gateway absent"}
 try {
-  $health=Invoke-RestMethod -Uri "http://127.0.0.1:8791/api/v1/play/health" -TimeoutSec 5
+  $health=Invoke-RestMethod -Uri "http://127.0.0.1:${PaymentsPort}/api/v1/play/health" -TimeoutSec 5
 } catch {throw "Sidecar CHK Paiements non disponible : arret de securite"}
 if($health.billingReady -ne $true){throw "Google Play Service Account non configure, impossible d'exposer"}
 if(Get-NetTCPConnection -LocalPort $GatewayPort -State Listen -ErrorAction SilentlyContinue){
   throw "Port $GatewayPort deja occupe"}
 $env:CHK_PLAY_GATEWAY_PORT="$GatewayPort"
+$env:CHK_PLAY_UPSTREAM="http://127.0.0.1:$PaymentsPort"
 try {
-  $process=Start-Process -FilePath (Get-Command node).Source -ArgumentList @($Script) -PassThru -WindowStyle Hidden
-} finally {Remove-Item Env:CHK_PLAY_GATEWAY_PORT -ErrorAction SilentlyContinue}
+  $process=Start-Process -FilePath (Get-Command node).Source -ArgumentList @('"' + $Script + '"') -PassThru -WindowStyle Hidden
+} finally {Remove-Item Env:CHK_PLAY_GATEWAY_PORT, Env:CHK_PLAY_UPSTREAM -ErrorAction SilentlyContinue}
 Start-Sleep -Seconds 2
 try {
   $status=Invoke-RestMethod -Uri "http://127.0.0.1:$GatewayPort/api/v1/play/health" -TimeoutSec 5
