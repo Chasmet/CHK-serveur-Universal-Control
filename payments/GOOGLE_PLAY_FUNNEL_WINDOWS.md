@@ -38,3 +38,10 @@ Sources : https://tailscale.com/docs/reference/tailscale-cli/funnel et https://t
 - Le workflow `.github/workflows/payments-windows-smoke.yml` analyse désormais **les deux scripts PowerShell**, et exécute les tests Node des paiements et de la passerelle Google Play sur la branche dédiée. Le succès des tests CI doit être confirmé séparément ; un commit n'atteste pas leur réussite.
 - Le dossier de préparation `CHK-Paiements-GooglePlay` est présent sur le PC Windows (lecture du stockage CHK), mais cela ne prouve ni son activation ni la mise à jour de ses fichiers. Ne pas activer `-ExposeFunnel` tant que les contrôles du serveur/compte Google ne sont pas concluants.
 - La piste interne doit importer un AAB **QA signé** du package public `com.sync30.mesnotesdossiers` avant les achats réels. Une application avec paiement effectif exige ensuite une compilation distincte et le test du service de vérification public.
+
+## Correction du serveur et tests — 14/11/2026
+
+- **Correction complémentaire importante** : `payments/hub.mjs` refusait `com.sync30.mesnotesdossiers` malgré l'autorisation dans la passerelle et le vérificateur Google. La liste d'autorisation des achats confirmés inclut désormais le package public en plus des deux packages historiques, sans toucher au code de Rush Studio ni de l'APK personnelle.
+- **Régression testée** : `tests/google-play-payments.test.mjs` simule l'achat du package public, l'enregistrement d'un historique sans jeton brut et un remboursement qui invalide le statut payé.
+- GitHub Actions Windows [run 43571399030](https://github.com/Chasmet/CHK-serveur-Universal-Control/actions/runs/43571399030) **SUCCESS** : parseur PowerShell et tests du serveur. Commit correctif hub `0ca74dc` ; test `f7095a0`.
+- **NON DÉPLOYÉ** : aucune preuve que le PC utilise cette branche corrigée, ni qu'un compte de service Google Play soit opérationnel ou que Funnel HTTPS soit exposé. N'ouvrir aucun paiement public avant l'intégration et les tests en piste interne.
