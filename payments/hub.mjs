@@ -199,7 +199,7 @@ export class PaymentsHub {
     const tokenHash = check?.tokenHash;
     const stateCode = check?.state;
     if (!/^[a-f0-9]{64}$/.test(tokenHash || "")) throw error("invalid_google_token_hash");
-    if (check.packageName !== "com.chk.blocnote" && check.packageName !== "com.chk.rushstudio")
+    if (!["com.chk.blocnote", "com.sync30.mesnotesdossiers", "com.chk.rushstudio"].includes(check.packageName))
       throw error("invalid_google_package");
     if (!["PURCHASED","CANCELLED"].includes(stateCode)) throw error("invalid_google_purchase_state");
     const id = "gplay_" + tokenHash.slice(0, 40);
