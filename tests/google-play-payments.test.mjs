@@ -118,6 +118,51 @@ test("CHK Paiements : health, achat vérifié, idempotence, remboursement, aucun
   assert.equal((await fetch(base+"/api/v1/activity")).status,401);
 });
 
+test("CHK Paiements : package Play public Sync30 accepté, achat et remboursement", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "sync30-public-play-"));
+  const publicToken = token + "_sync30_public";
+  const publicPurchase = {...valid,
+    packageName:"com.sync30.mesnotesdossiers",purchaseToken:publicToken};
+  let current = "PURCHASED";
+  const {server,hub} = await buildPaymentSidecar({
+    host:"127.0.0.1", port:0,
+    dataFile:join(dir,"orders.json"), devicesFile:join(dir,"devices.json"),
+    playVerifier:{
+      async ready(){return true;},
+      async verify(input){
+        assert.equal(input.packageName,publicPurchase.packageName);
+        assert.equal(input.productId,publicPurchase.productId);
+        return {verified:current==="PURCHASED",state:current,
+          tokenHash:hash(input.purchaseToken),packageName:input.packageName,
+          productId:input.productId,orderId:"GPA.public.sync30"};
+      }
+    }
+  });
+  await new Promise(resolve => server.listen(0,"127.0.0.1",resolve));
+  t.after(async()=>{
+    await new Promise(resolve=>server.close(resolve));
+    await rm(dir,{recursive:true,force:true});
+  });
+  const url = "http://127.0.0.1:"+server.address().port+"/api/v1/play/verify";
+  const verify = () => fetch(url,{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify(publicPurchase)
+  });
+  const first = await verify();
+  assert.equal(first.status,200);
+  assert.deepEqual(await first.json(),{
+    verified:true,packageName:publicPurchase.packageName,productId:publicPurchase.productId
+  });
+  assert.equal(hub.getActivity().length,1);
+  assert.equal(hub.getActivity()[0].app_id,publicPurchase.packageName);
+  assert.equal(hub.getActivity()[0].status,"paid");
+  assert.equal(JSON.stringify(hub.state).includes(publicToken),false);
+  current="CANCELLED";
+  assert.equal((await verify()).status,403);
+  assert.equal(hub.getActivity().length,1);
+  assert.equal(hub.getActivity()[0].status,"refunded");
+});
+
 async function setupRateLimitedPlay(t,limits) {
   const dir=await mkdtemp(join(tmpdir(),"chk-google-play-throttle-"));
   const {server}=await buildPaymentSidecar({
