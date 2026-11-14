@@ -35,9 +35,18 @@ $serveText = ($serveRaw | Out-String)
 $serveConfig = $serveText | ConvertFrom-Json
 if($serveConfig.Web){
   foreach($entry in $serveConfig.Web.PSObject.Properties){
-    if($entry.Name -match '(^|:)10000
+    if ($entry.Name -match '(^|:)10000
+      throw "Port HTTPS 10000 déjà utilisé par Tailscale Serve/Funnel. Arrêt de sécurité : aucune modification."
+    }
+  }
+}
+$statuses = & tailscale funnel status 2>&1
+Write-Host "Le port 10000 devient PUBLIC sur Internet, uniquement pour la vérification Google Play."
+Write-Host "Les ports existants 443 (MCP) et 8443 (Paiements privé) restent inchangés."
+tailscale funnel --bg --https=10000 "http://127.0.0.1:$GatewayPort"
+if($LASTEXITCODE -ne 0){throw "Tailscale a refusé Funnel 10000"}
 tailscale funnel status
-){
+) {
       throw "Port HTTPS 10000 déjà utilisé par Tailscale Serve/Funnel. Arrêt de sécurité : aucune modification."
     }
   }
