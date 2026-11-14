@@ -1,10 +1,11 @@
 name: CHK Paiements — Validation Windows indépendante
 on:
   push:
-    branches: ['feature/paiements-sync30']
+    branches: ['feature/paiements-sync30', 'feature/paiements-sync30-public-20261112']
     paths:
       - 'payments/**'
       - 'tests/payments*.test.mjs'
+      - 'tests/google-play*.test.mjs'
       - '.github/workflows/payments-windows-smoke.yml'
   workflow_dispatch:
 permissions:
@@ -20,7 +21,7 @@ jobs:
       - name: Vérifier syntaxe PowerShell
         shell: pwsh
         run: |
-          $paths = @('payments/windows/start-chk-paiements.ps1')
+          $paths = @('payments/windows/start-chk-paiements.ps1', 'payments/windows/start-google-play-funnel.ps1')
           foreach ($file in $paths) {
             $tokens = $null
             $errors = $null
@@ -35,4 +36,6 @@ jobs:
         shell: pwsh
         run: |
           node --check payments/sidecar.mjs
-          node --test tests/payments.test.mjs tests/payments-sidecar.test.mjs
+          node --check payments/google-play-verifier.mjs
+          node --check payments/public-play-gateway.mjs
+          node --test tests/payments.test.mjs tests/payments-sidecar.test.mjs tests/google-play-gateway.test.mjs tests/google-play-payments.test.mjs
