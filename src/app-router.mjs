@@ -1,5 +1,6 @@
 import { join, dirname } from "node:path";
 import { XDebtService } from "./xdebt.mjs";
+import { CameraMaisonModule } from "./camera.mjs";
 
 /**
  * Shared app namespace registry for CHK Universal Control.
@@ -12,7 +13,10 @@ export async function createApplicationRouter(config) {
     config.xdebtFile || join(dirname(config.file), "xdebt.json")
   ).init();
 
+  const camera = new CameraMaisonModule(config);
   const registrations = Object.freeze([
+    Object.freeze({ id:"camera-maison", prefix:"/camera/api", maxBodyBytes:32768,
+      handler:(req,res,url,body,json)=>camera.handle(req,res,url,body,json) }),
     Object.freeze({
       id: "xdebt",
       prefix: "/xdebt/api",

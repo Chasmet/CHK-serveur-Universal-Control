@@ -26,6 +26,10 @@ test("one Universal process serves legacy health and isolated XDebt routes on sa
   const app = await fetch(url + "/xdebt/api/health").then(r => r.json());
   assert.equal(app.service, "XDebt");
   assert.equal(app.payments_enabled, false);
+  const cam = await fetch(url + "/camera/api/health").then(r => r.json());
+  assert.equal(cam.backend, "CHK Universal PC");
+  assert.equal(cam.live_aiwit_p2p, false);
+  assert.equal((await fetch(url + "/camera/api/ci/signing")).status, 401);
   const a = await fetch(url + "/api/apps");
   assert.equal(a.status, 401);
   const mcp = await fetch(url + "/mcp", { method: "GET" });
@@ -46,11 +50,13 @@ test("the app router reserves old namespaces and isolates per-app paths", async 
   const directory = await mkdtemp(join(tmpdir(), "multiapp-registry-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const router = await createApplicationRouter({ file: join(directory,"core.json") });
-  assert.deepEqual(router.apps(), [{ id: "xdebt", prefix: "/xdebt/api" }]);
+  assert.deepEqual(router.apps(), [{ id: "camera-maison", prefix: "/camera/api" }, { id: "xdebt", prefix: "/xdebt/api" }]);
   for (const path of ["/mcp", "/oauth", "/api/login", "/health", "/chat", "/xdebt/api-v2/login", "/xdebt/apiary"])
     assert.equal(router.isApplicationPath(path), false, path);
   for (const path of ["/xdebt/api", "/xdebt/api/health", "/xdebt/api/register"])
     assert.equal(router.isApplicationPath(path), true, path);
   assert.equal(router.bodyLimit("/xdebt/api/register"), 180000);
   assert.equal(router.bodyLimit("/mcp"), 32768);
+  assert.equal(router.isApplicationPath("/camera/api/health"), true);
+  assert.equal(router.isApplicationPath("/camera/apis/health"), false);
 });
