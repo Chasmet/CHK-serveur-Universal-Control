@@ -56,8 +56,7 @@ async function exists(path) {
 }
 const PS = [
  "$ErrorActionPreference='Stop'",
- "$rsa=[System.Security.Cryptography.RSA]::Create()",
- "$rsa.KeySize=3072",
+ "$rsa=[System.Security.Cryptography.RSACng]::new(3072)",
  "$cert=$null",
  "try {",
  " $dn=[System.Security.Cryptography.X509Certificates.X500DistinguishedName]::new('CN=CHK Camera Maison')",
