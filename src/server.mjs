@@ -24,7 +24,9 @@ const baseConfig = () => ({
   legacyUrl: process.env.CHK_LEGACY_MCP_URL || "",
   ollamaUrl: process.env.OLLAMA_URL || "",
   ollamaModel: process.env.OLLAMA_MODEL || "qwen3:1.7b",
-  allowLocalOAuth: process.env.ALLOW_LOCAL_OAUTH === "true"
+  allowLocalOAuth: process.env.ALLOW_LOCAL_OAUTH === "true",
+  lesfaitsToken: process.env.LESFAITS_TOKEN || "",
+  lesfaitsConnectorIds: process.env.LESFAITS_CONNECTOR_IDS || ""
 });
 async function readBody(req, limit = 32768) {
   const pieces = [];
@@ -93,7 +95,7 @@ export async function buildServer(opts = {}) {
       return await store.markLegacy(id, { error: e.message, execution_state: "unknown", retry_command: false }, "unknown");
     }
   }
-  const mcp = createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto, markets, advancedMarket, monitor);
+  const mcp = createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto, markets, advancedMarket, monitor, appRouter.lesfaits);
   const json = security.json;
   const server = httpServer(async (req, res) => {
     res.setHeader("x-content-type-options", "nosniff");

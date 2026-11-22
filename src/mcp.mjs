@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { permissionView, connectorPermission } from "./autonomy.mjs";
 import { browserRoutes, browserTools } from "./browser-tools.mjs";
 import { SERVER_VERSION } from "./version.mjs";
+import { lesfaitsTools } from "./lesfaits.mjs";
 import { cryptoTools } from "./crypto.mjs";
 import { cryptoDeviceTools } from "./crypto-device-tools.mjs";
 import { asReadOnly as cryptoMarketTools } from "./crypto-markets.mjs";
@@ -54,7 +55,7 @@ function browserResult(job, store) {
 }
 
 function exposedTools() {
-  return [...tools,...cryptoTools,...cryptoDeviceTools,...cryptoMarketTools,...advancedMarketTools.filter(t=>!["crypto_orderbook","crypto_multi_timeframe"].includes(t.name)),...monitorTools,
+  return [...tools,...cryptoTools,...cryptoDeviceTools,...cryptoMarketTools,...advancedMarketTools.filter(t=>!["crypto_orderbook","crypto_multi_timeframe"].includes(t.name)),...monitorTools,...lesfaitsTools,
     {name:"crypto_chart_state",title:"CHK Crypto — graphique Android réel",description:"Lit la paire, l'unité de temps, les indicateurs et le viewport enregistrés par le vrai graphique Android; la tâche peut être en attente.",inputSchema:{type:"object",properties:{}},readOnlyHint:true},
     {name:"crypto_device_status",title:"CHK Crypto — agent Android",description:"État du dispositif, de la connexion Internet et de l'agent MCP Android.",inputSchema:{type:"object",properties:{}},readOnlyHint:true},
     {name:"crypto_chart_control",title:"Piloter graphique CHK Crypto",description:"Modifie la paire, timeframe, profil, indicateurs, zoom ou pan de l'application Android uniquement après approbation locale. Aucune opération de trading.",inputSchema:{type:"object",required:["action"],properties:{action:{type:"string",enum:["set_symbol","set_timeframe","set_profile","set_indicators","zoom_in","zoom_out","pan_left","pan_right","go_to_latest","set_auto_scale"]},args:{type:"object"}}}}
@@ -64,7 +65,7 @@ function exposedTools() {
     securitySchemes: [{ type: "oauth2", scopes: [readOnlyHint ? "mcp:read" : "mcp:write"] }]
   }));
 }
-export function createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto, markets, advancedMarket, monitor) {
+export function createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto, markets, advancedMarket, monitor, lesfaits) {
   const writeTools = new Set([...Object.keys(browserRoutes).filter(name=>browserRoutes[name].write),"permissions_grant","permissions_revoke","app_register", "app_invite", "task_submit", "task_cancel", "ai_chat", "godot_run", "godot_batch", "crypto_chart_control", "crypto_monitor_config", "crypto_action"]);
   return async function handle(rpc, req, res) {
     if (!rpc || rpc.jsonrpc !== "2.0" || typeof rpc.method !== "string" || Array.isArray(rpc)) {
@@ -74,8 +75,10 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
     if (!security.verify(security.bearer(req), need)) return security.unauthorized(res, need);
     if (rpc.id === undefined) { res.writeHead(202); return res.end(); }
     const identity = security.identity(security.bearer(req));
+    const lesfaitsNames = new Set(lesfaitsTools.map(t => t.name));
+    const lesfaitsAllowed = Boolean(lesfaits?.allowedConnector(identity?.connector_id));
     const allowedApps = identity?.app_ids ?? null;
-    const generic = new Set([...Object.keys(browserRoutes),"permissions_list","permissions_grant","permissions_revoke","activity_list","connector_identity","apps_list","server_status","task_submit","task_get","task_cancel"]);
+    const generic = new Set([...Object.keys(browserRoutes),...lesfaitsNames,"permissions_list","permissions_grant","permissions_revoke","activity_list","connector_identity","apps_list","server_status","task_submit","task_get","task_cancel"]);
     const canUseApp = id => allowedApps === null || allowedApps.includes(id);
     const canReadJob = job => job && canUseApp(job.app_id)
       && (!identity?.connector_id || !job.connector_id || job.connector_id === identity.connector_id);
@@ -84,11 +87,12 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
       if (rpc.method === "initialize") {
         result = { protocolVersion: ["2026-07-28", "2025-11-25", "2025-06-18"].includes(rpc.params?.protocolVersion) ? rpc.params.protocolVersion : "2025-06-18", capabilities: { tools: { listChanged: false } }, serverInfo: { name: "CHK Universal Control", version: SERVER_VERSION } };
       } else if (rpc.method === "ping") result = {};
-      else if (rpc.method === "tools/list") result = { tools: exposedTools().filter(tool => allowedApps === null || generic.has(tool.name)) };
+      else if (rpc.method === "tools/list") result = { tools: exposedTools().filter(tool => (allowedApps === null || generic.has(tool.name)) && (!lesfaitsNames.has(tool.name) || lesfaitsAllowed)) };
       else if (rpc.method === "tools/call") {
         const name = rpc.params?.name;
         const a = rpc.params?.arguments || {};
         if (allowedApps !== null && !generic.has(name)) throw Error("connector_tool_not_allowed");
+        if (lesfaitsNames.has(name) && !lesfaitsAllowed) throw Error("lesfaits_not_authorized");
         const actor = identity?.connector_id ? "mcp:" + identity.connector_id : "mcp";
         const context = { source: actor, connector_id: identity?.connector_id || null };
         let output;
@@ -147,6 +151,9 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
         else if (name === "server_status") output = { service: "CHK Universal Control", status: "running", apps: allowedApps === null ? Object.keys(store.state.apps).length + Number(Boolean(config.legacyUrl)) : allowedApps.length,
           connectors: Object.keys(store.state.connectors).length, oauth_clients: Object.keys(store.state.clients).length, registry_limit: null, ai_configured: Boolean(config.ollamaUrl), legacy_configured: Boolean(config.legacyUrl), version: SERVER_VERSION, browser_protocol: 2, browser_connected: Boolean(browserApp()?.online) };
         else if (name === "apps_list") output = store.appsPage(a, allowedApps, Boolean(config.legacyUrl));
+        else if (name === "lesfaits_list") output = await lesfaits.list(a);
+        else if (name === "lesfaits_detail") output = await lesfaits.detail(a);
+        else if (name === "lesfaits_stats") output = await lesfaits.stats();
         else if (name === "crypto_ticker") output = await markets.ticker(a);
         else if (name === "crypto_orderbook") output = await markets.orderbook(a);
         else if (name === "crypto_candles") output = await markets.candles(a);
