@@ -1,0 +1,28 @@
+name: CHK Camera-maison — vérifier la signature Windows
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/camera-signing-smoke.yml'
+      - '.github/scripts/camera-signing-smoke.mjs'
+      - 'src/camera.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-signer:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Générer un PKCS12 sur Windows puis vérifier sa stabilité
+        run: node .github/scripts/camera-signing-smoke.mjs
