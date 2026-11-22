@@ -596,7 +596,7 @@ namespace CHKUniversalControl
                         throw new Exception("Missing required files in packaged Windows executable");
                 }
             }
-            if(Version!="1.0.4")throw new Exception("Incorrect Windows launcher version");
+            if(Version!="1.0.5")throw new Exception("Incorrect Windows launcher version");
             // Regression for the user's screenshot: Process.HasExited throws when
             // Process.Start was denied and no native process is associated.
             using(var neverStarted = new Process()) {
