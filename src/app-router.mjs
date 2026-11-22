@@ -1,6 +1,7 @@
 import { join, dirname } from "node:path";
 import { XDebtService } from "./xdebt.mjs";
 import { CameraMaisonModule } from "./camera.mjs";
+import { LesFaitsModule } from "./lesfaits.mjs";
 
 /**
  * Shared app namespace registry for CHK Universal Control.
@@ -14,6 +15,7 @@ export async function createApplicationRouter(config) {
   ).init();
 
   const camera = new CameraMaisonModule(config);
+  const lesfaits = new LesFaitsModule(config);
   const registrations = Object.freeze([
     Object.freeze({ id:"camera-maison", prefix:"/camera/api", maxBodyBytes:32768,
       handler:(req,res,url,body,json)=>camera.handle(req,res,url,body,json) }),
@@ -22,7 +24,9 @@ export async function createApplicationRouter(config) {
       prefix: "/xdebt/api",
       maxBodyBytes: 180000,
       handler: (req, res, url, body, json) => xdebt.handle(req, res, url, body, json)
-    })
+    }),
+    Object.freeze({ id: "les-faits", prefix: "/lesfaits/api", maxBodyBytes: 5_000_000,
+      handler: (req, res, url, body, json) => lesfaits.handle(req, res, url, body, json) })
   ]);
 
   // Fail fast on collisions; existing Universal namespaces are reserved.
@@ -50,6 +54,7 @@ export async function createApplicationRouter(config) {
       if (!route) return false;
       return route.handler(req, res, url, body, json);
     },
-    apps: () => registrations.map(route => ({ id: route.id, prefix: route.prefix }))
+    apps: () => registrations.map(route => ({ id: route.id, prefix: route.prefix })),
+    lesfaits
   });
 }
