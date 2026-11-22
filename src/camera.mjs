@@ -56,14 +56,19 @@ async function exists(path) {
 }
 const PS = [
  "$ErrorActionPreference='Stop'",
- "$path=$env:CHK_CAMERA_PFX_PATH",
- "$pass=ConvertTo-SecureString $env:CHK_CAMERA_PFX_PASSWORD -AsPlainText -Force",
+ "$rsa=[System.Security.Cryptography.RSA]::Create()",
+ "$rsa.KeySize=3072",
  "$cert=$null",
  "try {",
- " $cert=New-SelfSignedCertificate -Type Custom -Subject 'CN=CHK Camera Maison' -FriendlyName 'chk-camera-maison' -CertStoreLocation 'Cert:\\CurrentUser\\My' -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 -KeyExportPolicy Exportable -NotAfter (Get-Date).AddYears(20)",
- " Export-PfxCertificate -Cert $cert -FilePath $path -Password $pass -Force | Out-Null",
- " if (!(Test-Path $path)) {throw 'missing_pfx'}",
- "} finally {if ($cert -ne $null) {Remove-Item ('Cert:\\CurrentUser\\My\\'+$cert.Thumbprint) -ErrorAction SilentlyContinue}}"
+ " $dn=[System.Security.Cryptography.X509Certificates.X500DistinguishedName]::new('CN=CHK Camera Maison')",
+ " $req=[System.Security.Cryptography.X509Certificates.CertificateRequest]::new($dn,$rsa,[System.Security.Cryptography.HashAlgorithmName]::SHA256,[System.Security.Cryptography.RSASignaturePadding]::Pkcs1)",
+ " $start=[System.DateTimeOffset]::UtcNow.AddMinutes(-5)",
+ " $end=[System.DateTimeOffset]::UtcNow.AddYears(20)",
+ " $cert=$req.CreateSelfSigned($start,$end)",
+ " $pfx=$cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx,$env:CHK_CAMERA_PFX_PASSWORD)",
+ " [System.IO.File]::WriteAllBytes($env:CHK_CAMERA_PFX_PATH,$pfx)",
+ " if (![System.IO.File]::Exists($env:CHK_CAMERA_PFX_PATH)) {throw 'missing_pfx'}",
+ "} finally {if ($cert -ne $null) {$cert.Dispose()}; $rsa.Dispose()}"
 ].join("\n");
 
 export class CameraMaisonModule {
