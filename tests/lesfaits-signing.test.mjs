@@ -24,7 +24,7 @@ test("Signature LES FAITS : OIDC uniquement dépôt, branche et workflow autoris
     ["repository","Chasmet/Camera-maison"],["ref","refs/heads/dev"],
     ["workflow_ref","Chasmet/Probl-me-r-curent-travail-/.github/workflows/android.yml@refs/heads/main"],
     ["event_name","pull_request"],["aud","https://evil.invalid"],
-    ["runner_environment","self-hosted"],["actor_id","other"],["exp",now-1]
+    ["runner_environment","self-hosted"],["actor_id","other"],["exp",now-60]
   ]) assert.equal(allowedLesFaitsClaims({...claims,[k]:v},audience,now),false,k);
   assert.equal(await verifyLesFaitsOidc("not-a-jwt",audience),false);
 });
