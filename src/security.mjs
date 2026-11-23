@@ -17,6 +17,7 @@ export function createSecurity(config, store) {
   const registrations = new Map();
   const chatgptUris = [
     "https://chatgpt.com/connector_platform_oauth_redirect",
+    "fr.sync30.lesfaits://oauth/callback",
     /^https:\/\/chatgpt\.com\/connector\/oauth\/[a-zA-Z0-9_-]{6,160}$/
   ];
   const allowedUri = uri => {
@@ -112,7 +113,7 @@ export function createSecurity(config, store) {
           "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
           "x-frame-options": "DENY"
         });
-        return res.end('<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CHK — Autoriser ChatGPT</title><style>body{font:16px sans-serif;max-width:480px;margin:7vh auto;padding:24px;background:#111827;color:#fff}input,button{font:inherit;padding:12px;width:100%;box-sizing:border-box;margin:10px 0}button{background:#2563eb;color:white;border:0;cursor:pointer}button:disabled{opacity:.5}#feedback{min-height:2em;color:#bfe5ff;white-space:pre-wrap}</style><h1>CHK Universal Control</h1><p>Autoriser ChatGPT à consulter et commander les applications ? Les actions sensibles nécessiteront une confirmation.</p><form id="chk-oauth-form" method="POST"><label>Mot de passe administrateur<input name="password" type="password" required autocomplete="current-password"></label><button id="chk-oauth-button" type="submit">Autoriser ChatGPT</button><p id="feedback" role="status" aria-live="polite"></p></form><script src="/oauth-login.js" defer></script></html>');
+        return res.end('<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CHK — Autoriser ChatGPT</title><style>body{font:16px sans-serif;max-width:480px;margin:7vh auto;padding:24px;background:#111827;color:#fff}input,button{font:inherit;padding:12px;width:100%;box-sizing:border-box;margin:10px 0}button{background:#2563eb;color:white;border:0;cursor:pointer}button:disabled{opacity:.5}#feedback{min-height:2em;color:#bfe5ff;white-space:pre-wrap}</style><h1>CHK Universal Control</h1><p>Autoriser cette application à accéder aux fonctions demandées ? Les accès peuvent être révoqués dans le serveur.</p><form id="chk-oauth-form" method="POST"><label>Mot de passe administrateur<input name="password" type="password" required autocomplete="current-password"></label><button id="chk-oauth-button" type="submit">Autoriser ChatGPT</button><p id="feedback" role="status" aria-live="polite"></p></form><script src="/oauth-login.js" defer></script></html>');
       }
       const ip = req.socket.remoteAddress || "unknown";
       const attempts = failures.get(ip) || { count: 0, until: 0 };

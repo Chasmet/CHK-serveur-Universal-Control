@@ -76,7 +76,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
     if (rpc.id === undefined) { res.writeHead(202); return res.end(); }
     const identity = security.identity(security.bearer(req));
     const lesfaitsNames = new Set(lesfaitsTools.map(t => t.name));
-    const lesfaitsAllowed = Boolean(lesfaits?.allowedConnector(identity?.connector_id));
+    const lesfaitsAllowed = Boolean(lesfaits?.allowedConnector(identity?.connector_id, identity?.name));
     const allowedApps = identity?.app_ids ?? null;
     const generic = new Set([...Object.keys(browserRoutes),...lesfaitsNames,"permissions_list","permissions_grant","permissions_revoke","activity_list","connector_identity","apps_list","server_status","task_submit","task_get","task_cancel"]);
     const canUseApp = id => allowedApps === null || allowedApps.includes(id);

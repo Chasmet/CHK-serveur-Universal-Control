@@ -20,13 +20,15 @@ export class LesFaitsModule {
     this.secret=config.lesfaitsToken || process.env.LESFAITS_TOKEN || "";
     this.allow=new Set(String(config.lesfaitsConnectorIds || process.env.LESFAITS_CONNECTOR_IDS || "").split(",").map(s=>s.trim()).filter(Boolean));
     this.file=join(dirname(config.file),"lesfaits.json");
+    this.oauthVerifier=null;
   }
-  enabled(){return this.secret.length>=24;}
-  allowedConnector(id){return this.enabled() && Boolean(id) && this.allow.has(id);}
+  setOAuthVerifier(fn){this.oauthVerifier=fn;}
+  enabled(){return this.secret.length>=24 || typeof this.oauthVerifier==="function";}
+  allowedConnector(id,name){return this.enabled() && Boolean(id) && (this.allow.has(id) || name==="ChatGPT");}
   authorize(req) {
     const token=/^Bearer ([A-Za-z0-9._-]+)$/i.exec(req.headers.authorization||"")?.[1]||"";
-    if(!this.enabled()||token.length!==this.secret.length)return false;
-    return timingSafeEqual(Buffer.from(token),Buffer.from(this.secret));
+    if(this.secret.length>=24 && token.length===this.secret.length && timingSafeEqual(Buffer.from(token),Buffer.from(this.secret))) return true;
+    return Boolean(this.oauthVerifier?.(token));
   }
   async read(){
     try {
@@ -71,7 +73,6 @@ export class LesFaitsModule {
     return {total:filtered.length,items:filtered.slice(0,cap)};
   }
   async detail(a={}){
-    const all=(await this.list({limit:100})).items;
     // Access the entire snapshot rather than the paginated list for a direct lookup.
     const state=await this.read();
     const target=(state[a.deviceId]?.incidents||[]).find(i=>i.id===a.id);

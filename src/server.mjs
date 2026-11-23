@@ -54,6 +54,11 @@ export async function buildServer(opts = {}) {
   const advancedMarket = createCryptoMarket();
   const monitor = createCryptoMonitor(store, crypto);
   const appRouter = await createApplicationRouter(config);
+  appRouter.lesfaits.setOAuthVerifier(accessToken => {
+    if (!security.verify(accessToken,"mcp:write")) return false;
+    const identity=security.identity(accessToken);
+    return Boolean(identity?.identified && identity?.name==="LES FAITS — SYNC 30");
+  });
   const loginFailures = new Map();
   async function legacyCall(tool, args) {
     if (!config.legacyUrl) throw Error("legacy_not_configured");

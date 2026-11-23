@@ -14,3 +14,14 @@ Les outils `lesfaits_list`, `lesfaits_detail` et `lesfaits_stats` sont masqués 
 API : `GET /lesfaits/api/health` sans authentification ; `POST /lesfaits/api/incidents` et `GET /lesfaits/api/incidents` protégés par `Authorization: Bearer <jeton>`.
 
 Limites : usage privé mono-administrateur ; fichier non chiffré au repos ; HTTPS obligatoire à l'extérieur ; pas de synchronisation bidirectionnelle ; import remplace le snapshot de chaque appareil ; aucun partage public des rapports.
+
+
+## Connexion sans jeton manuel (OAuth mobile)
+
+L'application Android LES FAITS utilise désormais le même hôte que `/mcp`, par exemple `https://chk-universal-1.taild9e4de.ts.net/mcp`. L'URL `/mcp` reste celle de ChatGPT ; la synchronisation des données utilise `/lesfaits/api/incidents` sur ce même serveur.
+
+Le propriétaire valide une fois la connexion dans son navigateur via OAuth 2.1 + PKCE. Le client mobile est reconnu exclusivement par le nom enregistré `LES FAITS — SYNC 30` et l'URI de retour `fr.sync30.lesfaits://oauth/callback`. Les jetons OAuth sont émis et renouvelés par le serveur, stockés dans Android Keystore et ne sont jamais saisis par l'utilisateur.
+
+Aucun `LESFAITS_TOKEN` n'est requis pour ce parcours. Le jeton statique historique reste optionnel pour les anciens clients. Les outils MCP de lecture LES FAITS sont accessibles aux connecteurs OAuth ChatGPT autorisés par le propriétaire ou via une liste d'autorisation explicite `LESFAITS_CONNECTOR_IDS`.
+
+Attention : la simple connaissance de l'URL MCP ne constitue **pas** une autorisation d'accès. Le navigateur doit confirmer l'identité du propriétaire avant toute synchronisation.
