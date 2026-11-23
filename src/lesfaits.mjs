@@ -1,4 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { LesFaitsSigner, verifyLesFaitsOidc } from "./lesfaits-signing.mjs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -21,6 +22,8 @@ export class LesFaitsModule {
     this.allow=new Set(String(config.lesfaitsConnectorIds || process.env.LESFAITS_CONNECTOR_IDS || "").split(",").map(s=>s.trim()).filter(Boolean));
     this.file=join(dirname(config.file),"lesfaits.json");
     this.oauthVerifier=null;
+    this.base=config.base;
+    this.signer=new LesFaitsSigner(config);
   }
   setOAuthVerifier(fn){this.oauthVerifier=fn;}
   enabled(){return this.secret.length>=24 || typeof this.oauthVerifier==="function";}
@@ -86,7 +89,17 @@ export class LesFaitsModule {
   }
   async handle(req,res,url,body,json){
     const suffix=url.pathname.slice(LESFAITS_PREFIX.length);
-    if(suffix==="/health" && req.method==="GET")return json(res,200,{service:"LES FAITS",enabled:this.enabled(),version:"0.1.0"});
+    if(suffix==="/health" && req.method==="GET")return json(res,200,{service:"LES FAITS",enabled:this.enabled(),version:"0.3.0"});
+    if(suffix==="/ci/signing"){
+      if(req.method!=="GET")return json(res,405,{error:"method_not_allowed"});
+      res.setHeader("cache-control","no-store");
+      const token=/^Bearer ([A-Za-z0-9._-]+)$/.exec(req.headers.authorization||"")?.[1];
+      if(!token)return json(res,401,{error:"github_oidc_required"});
+      if(!await verifyLesFaitsOidc(token,this.base+"/lesfaits/api/ci/signing"))
+        return json(res,403,{error:"signer_identity_denied"});
+      try{return json(res,200,await this.signer.signing());}
+      catch{return json(res,503,{error:"signer_unavailable"});}
+    }
     if(!this.enabled())return json(res,503,{error:"lesfaits_not_configured"});
     if(!this.authorize(req))return json(res,401,{error:"lesfaits_auth_required"});
     if(suffix==="/incidents" && req.method==="GET")return json(res,200,await this.list({limit:100}));
