@@ -25,3 +25,8 @@ Le propriétaire valide une fois la connexion dans son navigateur via OAuth 2.1 
 Aucun `LESFAITS_TOKEN` n'est requis pour ce parcours. Le jeton statique historique reste optionnel pour les anciens clients. Les outils MCP de lecture LES FAITS sont accessibles aux connecteurs OAuth ChatGPT autorisés par le propriétaire ou via une liste d'autorisation explicite `LESFAITS_CONNECTOR_IDS`.
 
 Attention : la simple connaissance de l'URL MCP ne constitue **pas** une autorisation d'accès. Le navigateur doit confirmer l'identité du propriétaire avant toute synchronisation.
+
+## Signature APK et mise à jour automatique
+La route `GET /lesfaits/api/ci/signing` fournit la clé privée **uniquement** au workflow officiel GitHub Actions du dépôt `Chasmet/Probl-me-r-curent-travail-`, authentifié par OIDC (repo, acteur, workflow et branche main). La clé est créée une seule fois sur le PC Windows, puis sauvegardée dans le répertoire privé à côté de `DATA_FILE`. Sauvegarder ce dossier hors ligne : la perte de la clé rendrait les futures mises à jour APK incompatibles.
+
+Le workflow de publication crée une GitHub Release signée à chaque augmentation de version Android (déclenchement sur push de `app/**`, ou manuel). Aucun APK non signé ne doit être publié. Tant que le serveur Windows avec ce module n'est pas **déployé et joignable**, la publication refuse de continuer. La compilation de test `Build Android` reste indépendante.

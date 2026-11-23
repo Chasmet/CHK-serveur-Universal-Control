@@ -21,7 +21,7 @@ let cache=null, expiration=0;
 export function allowedLesFaitsClaims(claims,audience,now=Math.floor(Date.now()/1000)){
   return Boolean(claims && typeof claims==="object"
     && Object.entries(EXPECTED).every(([field,expected])=>String(claims[field]??"")===expected)
-    && claims.event_name==="workflow_dispatch"
+    && ["workflow_dispatch","push"].includes(claims.event_name)
     && claims.iss===ISSUER && claims.aud===audience
     && claims.sub==="repo:"+REPOSITORY+":ref:refs/heads/main"
     && ["exp","nbf","iat"].every(field=>Number.isInteger(claims[field]))

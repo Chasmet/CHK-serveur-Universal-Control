@@ -20,6 +20,7 @@ test("Signature LES FAITS : OIDC uniquement dépôt, branche et workflow autoris
     iat:now-5,nbf:now-5,exp:now+120
   };
   assert.equal(allowedLesFaitsClaims(claims,audience,now),true);
+  assert.equal(allowedLesFaitsClaims({...claims,event_name:"push"},audience,now),true);
   for (const [k,v] of [
     ["repository","Chasmet/Camera-maison"],["ref","refs/heads/dev"],
     ["workflow_ref","Chasmet/Probl-me-r-curent-travail-/.github/workflows/android.yml@refs/heads/main"],
