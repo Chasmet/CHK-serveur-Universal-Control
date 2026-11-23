@@ -179,8 +179,8 @@ export function createSecurity(config, store) {
     }
     return false;
   };
-  function identity(jwt) {
-    if (!verify(jwt)) return null;
+  function identity(jwt, needed = "mcp:read") {
+    if (!verify(jwt, needed)) return null;
     const claims = JSON.parse(Buffer.from(jwt.split(".")[1], "base64url").toString());
     const clientId = claims.client_id || null;
     const id = claims.connector_id || clientId;

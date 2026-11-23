@@ -56,7 +56,7 @@ export async function buildServer(opts = {}) {
   const appRouter = await createApplicationRouter(config);
   appRouter.lesfaits.setOAuthVerifier(accessToken => {
     if (!security.verify(accessToken,"mcp:write")) return false;
-    const identity=security.identity(accessToken);
+    const identity=security.identity(accessToken,"mcp:write");
     return Boolean(identity?.identified && identity?.name==="LES FAITS — SYNC 30");
   });
   const loginFailures = new Map();
