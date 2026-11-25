@@ -3,7 +3,7 @@ const clean = (v, n) => String(v ?? '').trim().slice(0, n);
 export const BROWSER_NAME = 'CHK Agent Browser Android · Local 3';
 const key = connector => connector || 'owner';
 export const LESFAITS_NAME = 'LES FAITS — SYNC 30';
-const REPORT_ACTIONS = new Set(['lesfaits_create','lesfaits_attach','lesfaits_detach']);
+const REPORT_ACTIONS = new Set(['lesfaits_create','lesfaits_attach','lesfaits_detach','lesfaits_modifier','lesfaits_merge','lesfaits_archive','lesfaits_restore']);
 const reportApp = app => app?.name === LESFAITS_NAME;
 const allowedReportActions = app => app.capabilities.filter(c => c.readOnly === false && REPORT_ACTIONS.has(c.name)).map(c => c.name);
 
