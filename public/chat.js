@@ -98,6 +98,17 @@ async function loadConnectors(offset=0){
       card.append(node('summary',`${c.name||'ChatGPT'} · ${c.enabled?'activé':'désactivé'} · ${c.id.slice(-8)}`));
       const label=node('label','Nom du connecteur');const name=node('input');name.value=c.name||'';name.maxLength=80;label.append(name);card.append(label);
       card.append(node('p','Identifiant : '+c.id));
+      const auto=node('button',c.automatic_operations?'Désactiver les opérations courantes automatiques':'Autoriser les opérations courantes sur toutes les applications compatibles');
+      auto.type='button';
+      auto.onclick=async()=>{try{
+        const enabled=!c.automatic_operations;
+        if(!window.confirm(enabled?'Autoriser une seule fois les opérations ordinaires des applications compatibles pour ce connecteur ? Les opérations sensibles restent soumises aux protections.':'Désactiver ce mode pour ce connecteur ?'))return;
+        const resume=enabled&&window.confirm('Libérer aussi les demandes ordinaires déjà en attente pour ce connecteur ?');
+        await request('/api/connectors/'+c.id+'/automatic-operations',{enabled,resume_pending:resume},'PUT');
+        notice('Mode automatique enregistré.');await loadConnectors(connectorOffset);
+      }catch(e){notice(e.message);}};
+      card.append(auto);
+
       const enabled=node('input');enabled.type='checkbox';enabled.checked=c.enabled;enabled.style.width='auto';
       const enabledLabel=node('label',' Activer ce connecteur');enabledLabel.prepend(enabled);card.append(enabledLabel);
       const all=node('input');all.type='checkbox';all.checked=c.app_ids===null;all.style.width='auto';

@@ -89,7 +89,7 @@ export class Store {
   }
   connectorsPage(options = {}) {
     const rows = Object.entries(this.state.connectors).map(([id, c]) => ({ id, client_id: c.client_id, name: c.label || c.client_name,
-      enabled: c.enabled !== false, app_ids: c.app_ids ?? null, created_at: c.created_at }));
+      enabled: c.enabled !== false, app_ids: c.app_ids ?? null, automatic_operations: c.automatic_operations === true, created_at: c.created_at }));
     const { items, ...meta } = this.page(rows, options);
     return { connectors: items, ...meta, max_registered: null };
   }
@@ -116,7 +116,7 @@ export class Store {
       throw Error("invalid_capabilities");
     }
     const secret = "chkapp_" + randomBytes(32).toString("base64url");
-    const app = { id: uid(), name, capabilities: capabilities.map(c => ({ name: c.name, readOnly: c.readOnly, description: clean(c.description, 150) })), secret_hash: hash(secret), registered_at: now(), last_seen: null };
+    const app = { id: uid(), name, capabilities: capabilities.map(c => ({ name: c.name, readOnly: c.readOnly, description: clean(c.description, 150), ...(c.automationSafe === true && !c.readOnly ? {automationSafe:true} : {}) })), secret_hash: hash(secret), registered_at: now(), last_seen: null };
     await this.change(s => {
       s.apps[app.id] = app;
     });
@@ -137,7 +137,7 @@ export class Store {
     if (!name || !Array.isArray(capabilities) ||
         capabilities.some(c => !c || typeof c.name !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(c.name) || typeof c.readOnly !== "boolean")) throw Error("invalid_registration");
     const secret = "chkapp_" + randomBytes(32).toString("base64url");
-    const app = { id: uid(), name, capabilities: capabilities.map(c => ({ name: c.name, readOnly: c.readOnly, description: clean(c.description, 150) })), secret_hash: hash(secret), registered_at: now(), last_seen: null };
+    const app = { id: uid(), name, capabilities: capabilities.map(c => ({ name: c.name, readOnly: c.readOnly, description: clean(c.description, 150), ...(c.automationSafe === true && !c.readOnly ? {automationSafe:true} : {}) })), secret_hash: hash(secret), registered_at: now(), last_seen: null };
     await this.change(s => {
       const invite = s.invites[hash(String(input.invite || ""))];
       if (!invite || invite.expires < now()) throw Error("invalid_invite");
@@ -159,7 +159,7 @@ export class Store {
       const existing = new Map(app.capabilities.map(c => [c.name, c]));
       for (const c of source) if (existing.has(c.name) && existing.get(c.name).readOnly !== c.readOnly)
         throw Error("invalid_capability_policy");
-      for (const c of source) existing.set(c.name, {name:c.name,readOnly:c.readOnly,description:clean(c.description,150)});
+      for (const c of source) existing.set(c.name, {name:c.name,readOnly:c.readOnly,description:clean(c.description,150), ...(existing.get(c.name)?.automationSafe === true ? {automationSafe:true} : {})});
       app.capabilities=[...existing.values()];count=app.capabilities.length;
     });
     return {ok:true,id,capability_count:count};

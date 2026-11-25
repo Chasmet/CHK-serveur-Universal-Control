@@ -113,7 +113,7 @@ export function createSecurity(config, store) {
           "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
           "x-frame-options": "DENY"
         });
-        return res.end('<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CHK — Autoriser ChatGPT</title><style>body{font:16px sans-serif;max-width:480px;margin:7vh auto;padding:24px;background:#111827;color:#fff}input,button{font:inherit;padding:12px;width:100%;box-sizing:border-box;margin:10px 0}button{background:#2563eb;color:white;border:0;cursor:pointer}button:disabled{opacity:.5}#feedback{min-height:2em;color:#bfe5ff;white-space:pre-wrap}</style><h1>CHK Universal Control</h1><p>Autoriser cette application à accéder aux fonctions demandées ? Les accès peuvent être révoqués dans le serveur.</p><form id="chk-oauth-form" method="POST"><label>Mot de passe administrateur<input name="password" type="password" required autocomplete="current-password"></label><button id="chk-oauth-button" type="submit">Autoriser ChatGPT</button><p id="feedback" role="status" aria-live="polite"></p></form><script src="/oauth-login.js" defer></script></html>');
+        return res.end('<!doctype html><html lang="fr"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CHK — Autoriser ChatGPT</title><style>body{font:16px sans-serif;max-width:480px;margin:7vh auto;padding:24px;background:#111827;color:#fff}input,button{font:inherit;padding:12px;width:100%;box-sizing:border-box;margin:10px 0}button{background:#2563eb;color:white;border:0;cursor:pointer}button:disabled{opacity:.5}#feedback{min-height:2em;color:#bfe5ff;white-space:pre-wrap}</style><h1>CHK Universal Control</h1><p>Autoriser cette application à accéder aux fonctions demandées ? Les accès peuvent être révoqués dans le serveur.</p><form id="chk-oauth-form" method="POST"><label>Mot de passe administrateur<input name="password" type="password" required autocomplete="current-password"></label><label style="display:block"><input style="width:auto" type="checkbox" name="automatic_operations" value="yes" checked> Autoriser les opérations courantes sur mes applications compatibles, sans approbation répétée. Les actions sensibles restent protégées.</label><button id="chk-oauth-button" type="submit">Autoriser ChatGPT</button><p id="feedback" role="status" aria-live="polite"></p></form><script src="/oauth-login.js" defer></script></html>');
       }
       const ip = req.socket.remoteAddress || "unknown";
       const attempts = failures.get(ip) || { count: 0, until: 0 };
@@ -127,7 +127,7 @@ export function createSecurity(config, store) {
       failures.delete(ip);
       const authCode = "chkc_" + uid();
       await store.change(s => {
-        s.codes[hash(authCode)] = { ...meta, expires: now() + 5 * 60000 };
+        s.codes[hash(authCode)] = { ...meta, automatic_operations: body.automatic_operations === "yes" && meta.requestedScope.split(" ").includes("mcp:write"), expires: now() + 5 * 60000 };
       });
       const redirectUrl = new URL(meta.redirect);
       redirectUrl.searchParams.set("code", authCode);
@@ -155,7 +155,7 @@ export function createSecurity(config, store) {
         await store.change(s => {
           delete s.codes[hash(body.code)];
           s.connectors[connectorId] = { client_id: saved.clientId,
-            client_name: s.clients[saved.clientId].client_name, enabled: true, app_ids: s.clients[saved.clientId].app_ids?.slice() ?? null, created_at: now() };
+            client_name: s.clients[saved.clientId].client_name, enabled: true, app_ids: s.clients[saved.clientId].app_ids?.slice() ?? null, automatic_operations: saved.automatic_operations === true, created_at: now() };
           s.refresh[hash(refresh)] = { clientId: saved.clientId, connectorId, requestedScope: saved.requestedScope, expires: now() + 30 * 86400000 };
         });
         return json(res, 200, { access_token: token("owner", saved.requestedScope, saved.clientId, connectorId), connector_id: connectorId, token_type: "Bearer", expires_in: 3600, refresh_token: refresh, scope: saved.requestedScope });

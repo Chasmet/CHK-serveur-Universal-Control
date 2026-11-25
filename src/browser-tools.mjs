@@ -1,5 +1,10 @@
 const field = type => ({ type });
 export const browserRoutes = {
+  agent_control_status: {action:'desktop',write:true,fixed:{tool:'control',operation:'status'},description:'État réel du moteur souris, clavier et vision CHK Android.',properties:{}},
+  agent_observe: {action:'desktop',write:true,fixed:{tool:'control',operation:'observe'},description:'Observer une interface CHK web ou native. Retourne observation_id, contrôles, coordonnées et capture facultative autorisée. Ne pilote pas le bureau Windows.',properties:{target:{type:'string',enum:['web','native']},tab_id:field('string'),capture:field('boolean')}},
+  agent_input: {action:'desktop',write:true,fixed:{tool:'control',operation:'act'},description:'Souris ou clavier sur une observation récente CHK. id stable, observation_id, input.tool=pointer ou keyboard, expect pour vérifier. Respecte le contrôle Android et les protections des champs.',properties:{id:field('string'),observation_id:field('string'),input:field('object'),expect:field('object'),capture_after:field('boolean')}},
+  agent_parallel: {action:'desktop',write:true,fixed:{tool:'control',operation:'parallel'},description:'Démarre de 1 à 4 workflows CHK indépendants. Vérifier leurs résultats avant de conclure.',properties:{jobs:{type:'array',maxItems:4,items:{type:'object'}}}},
+
   browser_navigate: { action:'browser_open_url', write:true, description:'Ouvre une URL dans les onglets Android partagés. Retourne une tâche à vérifier avec task_get.', properties:{url:field('string')} },
   browser_click: { action:'browser_click', write:true, description:'Clique une cible Android/web et vérifie la condition attendue. Fournir selector et expected_selector, expected_text ou expected_url_contains.', properties:{selector:field('string'),expected_selector:field('string'),expected_text:field('string'),expected_url_contains:field('string')} },
   browser_type: { action:'browser_type', write:true, description:'Saisit du texte dans le champ selector du navigateur CHK.', properties:{selector:field('string'),text:field('string')} },

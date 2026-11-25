@@ -1,4 +1,4 @@
-import { deviceConsent, permissionView, connectorPermission, ownerReportPermission, ownerReportPermissionView } from "./autonomy.mjs";
+import { deviceConsent, permissionView, connectorPermission, ownerReportPermission, ownerReportPermissionView, ownerAutomaticOperations } from "./autonomy.mjs";
 import { SERVER_VERSION } from "./version.mjs";
 import { createServer as httpServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -183,6 +183,9 @@ export async function buildServer(opts = {}) {
       if (req.method === "GET" && url.pathname === "/api/connectors") return json(res, 200, store.connectorsPage(pageOptions()));
       const connectorMatch = /^\/api\/connectors\/((?:chk|conn)_[a-f0-9]{36})$/.exec(url.pathname);
       if (connectorMatch && req.method === "PUT") return json(res, 200, await store.configureConnector(connectorMatch[1], body));
+      const automaticMatch = /^\/api\/connectors\/(conn_[a-f0-9]{36})\/automatic-operations$/.exec(url.pathname);
+      if (automaticMatch && req.method === "PUT") return json(res, 200, await ownerAutomaticOperations(store, automaticMatch[1], body));
+
       if (req.method === "POST" && url.pathname === "/api/apps") return json(res, 201, await store.registerApp(body));
       if (req.method === "POST" && url.pathname === "/api/invites") return json(res, 201, await store.createInvite());
       if (req.method === "GET" && url.pathname === "/api/tasks") return json(res, 200, { tasks: store.listJobs() });

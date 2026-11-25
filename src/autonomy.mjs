@@ -7,9 +7,18 @@ const REPORT_ACTIONS = new Set(['lesfaits_create','lesfaits_attach','lesfaits_de
 const reportApp = app => app?.name === LESFAITS_NAME;
 const allowedReportActions = app => app.capabilities.filter(c => c.readOnly === false && REPORT_ACTIONS.has(c.name)).map(c => c.name);
 
+// General automation is limited to ordinary declared capabilities. Never grant
+// system commands, financial transactions, credentials or destructive operations.
+const sensitive = /(?:^|_)(?:delete|destroy|erase|purge|wipe|trash|remove|reset|exec|shell|terminal|command|script|install|uninstall|update_server|password|secret|token|credential|permission|grant|revoke|publish|send|transfer|withdraw|trade|order|buy|sell|payment|pay|sign|admin|shutdown|restart)(?:_|$)/i;
+export function ordinaryAction(app, action) {
+  if (!app || app.system || app.name === BROWSER_NAME || /crypto|binance|bybit|banque|bank|godot|finance|payment/i.test(app.name)) return false;
+  const capability=app.capabilities.find(c=>c.name===action);
+  if (!capability || capability.readOnly || sensitive.test(action)) return false;
+  if (reportApp(app)) return REPORT_ACTIONS.has(action);
+  return capability.automationSafe === true;
+}
 export function permitted(state, app, action, connector) {
-  if (!reportApp(app) && (app?.name !== BROWSER_NAME || app.autonomy?.enabled !== true)) return false;
-  if (!app.capabilities.some(c => c.name === action)) return false;
+  if (!app?.capabilities.some(c => c.name === action)) return false;
   if (connector) {
     const connection = state.connectors[connector] || state.clients[connector];
     const client = state.clients[connection?.client_id || connector];
@@ -17,8 +26,14 @@ export function permitted(state, app, action, connector) {
     if ([connection.app_ids, client.app_ids].some(ids => ids != null && !ids.includes(app.id))) return false;
   }
   const grant = state.permissions?.[key(connector)]?.[app.id];
-  if (reportApp(app)) return Boolean(connector && REPORT_ACTIONS.has(action) && grant?.enabled === true && grant.source === 'owner_dashboard' && grant.actions?.includes(action));
-  return !grant || grant.enabled !== false && (grant.actions === null || grant.actions.includes(action));
+  if (app.name === BROWSER_NAME) {
+    if (app.autonomy?.enabled !== true) return false;
+    return !grant || grant.enabled !== false && (grant.actions === null || grant.actions.includes(action));
+  }
+  if (!connector || !ordinaryAction(app,action) || grant?.enabled === false) return false;
+  if (reportApp(app) && grant?.enabled === true && grant.source === 'owner_dashboard' && grant.actions?.includes(action)) return true;
+  return state.connectors[connector]?.automatic_operations === true;
+
 }
 function reconcile(state, app, resume = {}) {
   for (const job of Object.values(state.jobs)) {
@@ -99,4 +114,20 @@ export function ownerReportPermissionView(store) {
     const client=store.state.clients[c.client_id];
     return c.enabled && client && client.enabled!==false && [c.app_ids,client.app_ids].every(ids=>ids==null||ids.includes(a.id)) || store.state.permissions?.[key(c.id)]?.[a.id]?.source==='owner_dashboard';
   }).map(c=>({id:c.id,name:c.name,grant:store.state.permissions?.[key(c.id)]?.[a.id]||null}))}))};
+}
+
+/** Existing OAuth connections can opt into the same mode once in the owner dashboard. */
+export async function ownerAutomaticOperations(store, connector, input) {
+  const c=store.state.connectors[connector];
+  if (!c || typeof input.enabled !== 'boolean') throw Error('invalid_automatic_operations');
+  if (input.enabled && (c.enabled===false || store.state.clients[c.client_id]?.enabled===false || !store.state.clients[c.client_id])) throw Error('invalid_connector_scope');
+  await store.change(s=>{
+    s.connectors[connector].automatic_operations=input.enabled;
+    (s.permission_events ||= []).push({connector_id:connector,event:input.enabled?'automatic_enabled':'automatic_disabled',at:now()});
+    for(const app of Object.values(s.apps)) {
+      if(app.name===BROWSER_NAME)continue;
+      reconcile(s,app,{enabled:input.enabled&&input.resume_pending===true,connector});
+    }
+  });
+  return {connector_id:connector,automatic_operations:input.enabled};
 }

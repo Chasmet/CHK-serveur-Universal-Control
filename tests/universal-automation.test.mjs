@@ -1,0 +1,25 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { permitted, ownerAutomaticOperations } from '../src/autonomy.mjs';
+const app={id:'a',name:'Future application',capabilities:[{name:'create_note',readOnly:false,automationSafe:true},{name:'delete_note',readOnly:false,automationSafe:true},{name:'unknown',readOnly:false}]};
+const report={id:'r',name:'LES FAITS — SYNC 30',capabilities:[{name:'lesfaits_create',readOnly:false}]};
+const crypto={...app,id:'f',name:'CHK Crypto'};
+const browser={...app,id:'b',name:'CHK Agent Browser Android · Local 3'};
+test('unique OAuth consent does not authorize unknown, sensitive, out of scope or unconsented device actions',async()=>{
+ const state={apps:{a:app,r:report,f:crypto,b:browser},connectors:{c:{client_id:'client'},d:{client_id:'client'}},clients:{client:{enabled:true}},jobs:{j:{app_id:'r',connector_id:'c',action:'lesfaits_create',state:'pending_approval'},k:{app_id:'r',connector_id:'d',action:'lesfaits_create',state:'pending_approval'}}};
+ const store={state,change:async fn=>fn(state)};
+ assert.equal(permitted(state,report,'lesfaits_create','c'),false);
+ await ownerAutomaticOperations(store,'c',{enabled:true,resume_pending:true});
+ assert.equal(permitted(state,app,'create_note','c'),true);
+ assert.equal(permitted(state,report,'lesfaits_create','c'),true);
+ assert.equal(permitted(state,app,'delete_note','c'),false);
+ assert.equal(permitted(state,app,'unknown','c'),false);
+ assert.equal(permitted(state,crypto,'create_note','c'),false);
+ assert.equal(permitted(state,browser,'create_note','c'),false);
+ assert.equal(permitted(state,app,'create_note','d'),false);
+ assert.equal(permitted(state,app,'create_note',null),false);
+ assert.equal(state.jobs.j.state,'queued');assert.equal(state.jobs.k.state,'pending_approval');
+ state.connectors.c.app_ids=['r'];assert.equal(permitted(state,app,'create_note','c'),false);
+ await ownerAutomaticOperations(store,'c',{enabled:false});
+ assert.equal(state.jobs.j.state,'pending_approval');assert.equal(permitted(state,report,'lesfaits_create','c'),false);
+});

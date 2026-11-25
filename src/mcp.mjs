@@ -24,7 +24,7 @@ const tools = [
   { name: "apps_list", title: "Applications connectees", description: "Lister les applications autorisées et leurs capacités, par pages de 25 (maximum 100). Utiliser next_offset pour continuer ou query pour chercher un identifiant/nom.", inputSchema: { type: "object", properties: pagination }, readOnlyHint: true },
   { name: "app_register", title: "Enregistrer application", description: "Enregistre une application avec capacités déclarées. Retourne une clé privée UNE SEULE FOIS; ne la publiez jamais.", inputSchema: { type: "object", required: ["name", "capabilities"], properties: { name: { type: "string" }, capabilities: { type: "array", items: { type: "object", required: ["name", "readOnly"], properties: { name: { type: "string" }, description: { type: "string" }, readOnly: { type: "boolean" } } } } } } },
   { name: "app_invite", title: "Invitation application", description: "Génère une invitation unique de 15 minutes pour qu’une nouvelle application s’enregistre sans donner le mot de passe principal.", inputSchema: { type: "object", properties: {} } },
-  { name: "task_submit", title: "Envoyer une commande", description: "Envoie une action vers une application enregistrée. Les actions d'écriture requièrent approbation explicite; l'état queued n'est pas completed.", inputSchema: { type: "object", required: ["action"], properties: { app_id: { type: "string" }, action: { type: "string" }, args: { type: "object" }, request_id: { type: "string" } } } },
+  { name: "task_submit", title: "Envoyer une commande", description: "Envoie une action vers une application enregistrée. Les opérations ordinaires compatibles sont automatiques après consentement OAuth ou propriétaire ; les autres requièrent une approbation. queued n'est pas completed.", inputSchema: { type: "object", required: ["action"], properties: { app_id: { type: "string" }, action: { type: "string" }, args: { type: "object" }, request_id: { type: "string" } } } },
   { name: "task_get", title: "Etat de tâche", description: "Lire le résultat réel ou l'état d'une tâche.", inputSchema: { type: "object", required: ["task_id"], properties: { task_id: { type: "string" } } }, readOnlyHint: true },
   { name: "task_cancel", title: "Annuler commande", description: "Annule une tâche encore non exécutée.", inputSchema: { type: "object", properties: { task_id: { type: "string" }, workflow_id:{type:"string"}, app_id:{type:"string"} },anyOf:[{required:["task_id"]},{required:["workflow_id"]}] } },
   { name: "ai_chat", title: "Assistant Qwen open source", description: "Pose une question au modèle local via Ollama et orchestre des outils disponibles. Modèle externe optionnel.", inputSchema: { type: "object", required: ["message"], properties: { message: { type: "string" } } } },
@@ -121,7 +121,7 @@ export function createMCP(config, store, security, ai, legacyCall, approveTask, 
           const {items,...meta}=store.page(rows,a); output={activity:items,...meta};
         }
         else if (browserRoutes[name]) {
-          const app = pickBrowser(); const {app_id,request_id,...args}=a;
+          const app = pickBrowser(); const {app_id,request_id,...input}=a; const args={...input,...browserRoutes[name].fixed};
           if(browserRoutes[name].action.startsWith("workflow_")) args.id=workflowId(args.id);
           output=await store.submit({app_id:app.id,action:browserRoutes[name].action,args,request_id,...context});
         }
