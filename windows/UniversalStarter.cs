@@ -17,6 +17,7 @@ using System.Web.Script.Serialization;
 using Microsoft.Win32;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 
 namespace CHKUniversalControl
 {
@@ -49,7 +50,7 @@ namespace CHKUniversalControl
 
     sealed class MainPanel : Form
     {
-        const string Version = "1.0.8";
+        const string Version = "1.0.9";
         static readonly string Root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CHKUniversalControl");
         static readonly string Runtime = Path.Combine(Root, "runtime-v" + Version);
@@ -331,6 +332,7 @@ namespace CHKUniversalControl
                     UpdateStatus("Installation du serveur sur ton ordinateur (sans modifier PC-SALON)...");
                     Config();
                     InstallResources();
+                    RecoverPreviousRuntime();
                     StartNode(false);
                     StartBridge();
                     // Autostart is optional: security software can deny copying a new
@@ -367,6 +369,88 @@ namespace CHKUniversalControl
                 using(var reader = new StreamReader(response.GetResponseStream()))
                     return reader.ReadToEnd().Contains("CHK Universal Control");
             } catch { return false; }
+        }
+
+        // Inspect the actual IPv4 listening PID. Never kill every node.exe or
+        // stop the system Tailscale service. Only our own versioned runtime is eligible.
+        [DllImport("iphlpapi.dll", SetLastError = true)]
+        static extern uint GetExtendedTcpTable(IntPtr table, ref int size, bool order, int family, int tableClass, uint reserved);
+        static int ListenerPid(int port) {
+            int size = 0;
+            uint rc = GetExtendedTcpTable(IntPtr.Zero, ref size, false, 2, 3, 0);
+            if (rc != 122 || size < 4 || size > 16*1024*1024)
+                throw new Exception("Impossible d'identifier le processus du port local.");
+            IntPtr buffer = Marshal.AllocHGlobal(size);
+            try {
+                rc = GetExtendedTcpTable(buffer, ref size, false, 2, 3, 0);
+                if(rc != 0) throw new Exception("Impossible de lire les ports Windows.");
+                int count = Marshal.ReadInt32(buffer);
+                if(count < 0 || count > (size-4)/24) throw new Exception("Table des ports Windows invalide.");
+                int pid = 0;
+                for(int i=0;i<count;i++) {
+                    int offset=4+i*24;
+                    int raw=Marshal.ReadInt32(buffer,offset+8);
+                    int number=((raw&255)<<8)|((raw>>8)&255);
+                    if(number!=port) continue;
+                    int candidate=Marshal.ReadInt32(buffer,offset+20);
+                    if(pid!=0 && pid!=candidate) throw new Exception("Plusieurs processus utilisent le port local.");
+                    pid=candidate;
+                }
+                return pid;
+            } finally { Marshal.FreeHGlobal(buffer); }
+        }
+        static bool IsOwnRuntimeBinary(string root, string executable, string name) {
+            if(String.IsNullOrEmpty(executable))return false;
+            var dir=Path.GetDirectoryName(Path.GetFullPath(executable));
+            if(!String.Equals(Path.GetFileName(executable),name,StringComparison.OrdinalIgnoreCase))return false;
+            if(!String.Equals(Path.GetDirectoryName(dir),Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar),StringComparison.OrdinalIgnoreCase))return false;
+            return Regex.IsMatch(Path.GetFileName(dir),@"^runtime-v[0-9]+\.[0-9]+\.[0-9]+$",RegexOptions.IgnoreCase);
+        }
+        void RecoverPreviousRuntime() {
+            if(!LocalHealthy() || LocalCompatible())return;
+            int pid=ListenerPid(8787);
+            if(pid<=0)throw new Exception("Ancien serveur détecté mais PID introuvable. Aucun processus arrêté.");
+            using(var old=Process.GetProcessById(pid)) {
+                string executable=old.MainModule.FileName;
+                if(!IsOwnRuntimeBinary(Root,executable,"node.exe") ||
+                    String.Equals(Path.GetFullPath(executable),Path.GetFullPath(NodeFile),StringComparison.OrdinalIgnoreCase))
+                    throw new Exception("Le port 8787 appartient à un processus non reconnu. Aucun arrêt automatique.");
+                // Refuse to replace a newer or unrecognized version.
+                System.Version previous;
+                var label=Path.GetFileName(Path.GetDirectoryName(executable)).Substring("runtime-v".Length);
+                if(!System.Version.TryParse(label,out previous) || previous.CompareTo(new System.Version(Version))>=0)
+                    throw new Exception("Version existante non remplaçable automatiquement.");
+                var confirmation=(DialogResult)Invoke((Func<DialogResult>)delegate {
+                    return MessageBox.Show(this,"Ancien moteur CHK "+label+" encore actif. Le remplacer par "+Version+" ?\n\nLes dossiers, comptes et clés Tailscale sont conservés. Les commandes en cours peuvent être interrompues.",
+                        "Mise à niveau CHK",MessageBoxButtons.YesNo,MessageBoxIcon.Question);
+                });
+                if(confirmation!=DialogResult.Yes)throw new Exception("Mise à niveau annulée. Ancien serveur conservé.");
+                if(ListenerPid(8787)!=pid || !LocalHealthy() || LocalCompatible())
+                    throw new Exception("Le processus a changé. Relance la mise à niveau.");
+                UpdateStatus("Arrêt ciblé de l'ancien moteur CHK (PID "+pid+").");
+                old.Kill();
+                if(!old.WaitForExit(10000))throw new Exception("L'ancien moteur ne s'est pas arrêté.");
+            }
+            for(int i=0;i<40 && ListenerPid(8787)!=0;i++)Thread.Sleep(250);
+            if(ListenerPid(8787)!=0)throw new Exception("Le port 8787 est encore occupé. Aucun autre processus arrêté.");
+            // Stop only the companion tunnel in this same installation root;
+            // never delete its data or touch the PC-SALON Tailscale service.
+            foreach(var p in Process.GetProcessesByName("tailscale-bridge")) {
+                using(p) {
+                    string exe;
+                    try{exe=p.MainModule.FileName;}catch{continue;}
+                    if(!IsOwnRuntimeBinary(Root,exe,"tailscale-bridge.exe"))continue;
+                    p.Kill();
+                    if(!p.WaitForExit(10000))throw new Exception("Ancien tunnel CHK encore actif.");
+                }
+            }
+            string data=Path.Combine(Root,"data","server.json");
+            if(File.Exists(data)) {
+                string backup=Path.Combine(Root,"data","server.before-"+Version+"-"+DateTime.UtcNow.ToString("yyyyMMddHHmmssfff")+".json");
+                File.Copy(data,backup,false);
+                UpdateStatus("Sauvegarde locale créée ; associations et identité Tailscale conservées.");
+            }
+            UpdateStatus("Ancien moteur arrêté. Installation de la version "+Version+".");
         }
 
         void StartNode(bool restart) {
@@ -596,7 +680,13 @@ namespace CHKUniversalControl
                         throw new Exception("Missing required files in packaged Windows executable");
                 }
             }
-            if(Version!="1.0.8")throw new Exception("Incorrect Windows launcher version");
+            if(Version!="1.0.9")throw new Exception("Incorrect Windows launcher version");
+            if(!IsOwnRuntimeBinary(Root,Path.Combine(Root,"runtime-v1.0.4","node.exe"),"node.exe") ||
+               IsOwnRuntimeBinary(Root,Path.Combine(Root,"other","node.exe"),"node.exe") ||
+               IsOwnRuntimeBinary(Root,Path.Combine(Root,"runtime-v1.0.4","other.exe"),"node.exe") ||
+               IsOwnRuntimeBinary(Root,Path.Combine(Root+"-other","runtime-v1.0.4","node.exe"),"node.exe"))
+                throw new Exception("Runtime ownership test failed");
+            ListenerPid(8787); // Validate the Windows TCP PID API on the real executable.
             // Regression for the user's screenshot: Process.HasExited throws when
             // Process.Start was denied and no native process is associated.
             using(var neverStarted = new Process()) {
