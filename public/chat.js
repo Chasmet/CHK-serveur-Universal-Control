@@ -128,7 +128,35 @@ $("connectorsearch").onclick=()=>loadConnectors();
 $("connectorprev").onclick=()=>loadConnectors(Math.max(0,connectorOffset-25));
 $("connectornext").onclick=()=>{if(connectorNext!==null)loadConnectors(connectorNext);};
 
-$("permissions").onclick=async()=>{try{line("Autorisations persistantes Android",await request('/api/permissions'));}catch(e){notice(e.message);}};
+$("permissions").onclick=async()=>{try{
+  const data=await request('/api/report-permissions');
+  const oldPanel=$("reportpermissions");if(oldPanel)oldPanel.remove();
+  const panel=node('section');panel.id='reportpermissions';panel.className='line';
+  panel.append(node('h2','LES FAITS — Autorisation permanente'));
+  panel.append(node('p','Autorisez uniquement le connecteur et le téléphone souhaités. Création et association de fichiers uniquement ; suppression des rapports non autorisée.'));
+  for(const app of data.apps.sort((a,b)=>b.registered_at-a.registered_at)){
+    const card=node('div');card.className='line';
+    card.append(node('p',app.name+' · '+app.id.slice(-8)+' · associé le '+new Date(app.registered_at).toLocaleString()));
+    for(const c of app.connectors){
+      const row=node('div');
+      row.append(node('p',c.name+' · '+c.id.slice(-8)+' · '+(c.grant?.enabled?'Autorisé':'Non autorisé')));
+      const btn=node('button',c.grant?.enabled?'Révoquer':'Autoriser durablement');btn.type='button';
+      btn.onclick=async()=>{try{
+        const enabled=!c.grant?.enabled;
+        if(!window.confirm((enabled?'Autoriser durablement ':'Révoquer ')+c.name+' ('+c.id.slice(-8)+') pour LES FAITS ('+app.id.slice(-8)+') ?'))return;
+        const resume=enabled&&window.confirm('Autoriser également les tâches LES FAITS déjà en attente pour ce téléphone et ce connecteur ?');
+        await request('/api/report-permissions',{app_id:app.id,connector_id:c.id,enabled,resume_pending:resume},'PUT');
+        notice(enabled?'Autorisation LES FAITS enregistrée.':'Autorisation LES FAITS révoquée.');
+        await $("permissions").onclick();
+      }catch(e){notice(e.message);}};
+      row.append(btn);card.append(row);
+    }
+    panel.append(card);
+  }
+  if(!data.apps.length)panel.append(node('p','Aucune application LES FAITS compatible.'));
+  $("messages").append(panel);panel.scrollIntoView({block:'start'});
+  line("Autorisations Android CHK Browser",await request('/api/permissions'));
+}catch(e){notice(e.message);}};
 $("activity").onclick=async()=>{try{
   const page=await request('/api/activity');line("Journal d’activité",page);
   if(page.next_offset!==null){let offset=page.next_offset;const more=node('button','Activités suivantes');more.onclick=async()=>{try{const p=await request('/api/activity?offset='+offset);line('Journal d’activité',p);offset=p.next_offset;more.disabled=offset===null;}catch(e){notice(e.message);}};$("messages").append(more);}

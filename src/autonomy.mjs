@@ -2,8 +2,13 @@ const now = Date.now;
 const clean = (v, n) => String(v ?? '').trim().slice(0, n);
 export const BROWSER_NAME = 'CHK Agent Browser Android · Local 3';
 const key = connector => connector || 'owner';
+export const LESFAITS_NAME = 'LES FAITS — SYNC 30';
+const REPORT_ACTIONS = new Set(['lesfaits_create','lesfaits_attach','lesfaits_detach']);
+const reportApp = app => app?.name === LESFAITS_NAME;
+const allowedReportActions = app => app.capabilities.filter(c => c.readOnly === false && REPORT_ACTIONS.has(c.name)).map(c => c.name);
+
 export function permitted(state, app, action, connector) {
-  if (app?.name !== BROWSER_NAME || app.autonomy?.enabled !== true) return false;
+  if (!reportApp(app) && (app?.name !== BROWSER_NAME || app.autonomy?.enabled !== true)) return false;
   if (!app.capabilities.some(c => c.name === action)) return false;
   if (connector) {
     const connection = state.connectors[connector] || state.clients[connector];
@@ -12,6 +17,7 @@ export function permitted(state, app, action, connector) {
     if ([connection.app_ids, client.app_ids].some(ids => ids != null && !ids.includes(app.id))) return false;
   }
   const grant = state.permissions?.[key(connector)]?.[app.id];
+  if (reportApp(app)) return Boolean(connector && REPORT_ACTIONS.has(action) && grant?.enabled === true && grant.source === 'owner_dashboard' && grant.actions?.includes(action));
   return !grant || grant.enabled !== false && (grant.actions === null || grant.actions.includes(action));
 }
 function reconcile(state, app, resume = {}) {
@@ -64,4 +70,33 @@ export async function connectorPermission(store, connector, id, input) {
     reconcile(s, s.apps[id], {enabled:input.enabled && input.resume_pending === true, connector});
   });
   return { app_id: id, connector_id: connector || null, ...grant, request_quota: null };
+}
+
+/** Owner dashboard only: explicit, app- and connector-specific consent. */
+export async function ownerReportPermission(store, id, connector, input) {
+  const app = store.state.apps[id];
+  const connection = store.state.connectors[connector];
+  const client = store.state.clients[connection?.client_id];
+  if (!reportApp(app) || !connection || typeof input.enabled !== 'boolean') throw Error('invalid_report_permission');
+  if (input.enabled && (connection.enabled === false || !client || client.enabled === false ||
+    [connection.app_ids, client.app_ids].some(ids => ids != null && !ids.includes(id)))) throw Error('invalid_report_connector_scope');
+  const actions = allowedReportActions(app);
+  if (!actions.length) throw Error('invalid_report_capabilities');
+  let grant;
+  await store.change(s => {
+    ((s.permissions ||= {})[key(connector)] ||= {})[id] = grant = {
+      enabled: input.enabled, actions, updated_at: now(), source: 'owner_dashboard'
+    };
+    (s.permission_events ||= []).push({app_id:id,connector_id:connector,event:input.enabled?'report_granted':'report_revoked',at:now()});
+    reconcile(s,s.apps[id],{enabled:input.enabled && input.resume_pending === true,connector});
+  });
+  return {app_id:id,connector_id:connector,...grant};
+}
+export function ownerReportPermissionView(store) {
+  const apps = Object.values(store.state.apps).filter(reportApp).filter(a=>allowedReportActions(a).length);
+  const connectors = Object.entries(store.state.connectors).map(([id,c])=>({id,name:c.label||c.client_name||'ChatGPT',enabled:c.enabled!==false,client_id:c.client_id,app_ids:c.app_ids??null}));
+  return {apps:apps.map(a=>({id:a.id,name:a.name,registered_at:a.registered_at,last_seen:a.last_seen,actions:allowedReportActions(a),connectors:connectors.filter(c=>{
+    const client=store.state.clients[c.client_id];
+    return c.enabled && client && client.enabled!==false && [c.app_ids,client.app_ids].every(ids=>ids==null||ids.includes(a.id)) || store.state.permissions?.[key(c.id)]?.[a.id]?.source==='owner_dashboard';
+  }).map(c=>({id:c.id,name:c.name,grant:store.state.permissions?.[key(c.id)]?.[a.id]||null}))}))};
 }

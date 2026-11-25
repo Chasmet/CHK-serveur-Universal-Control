@@ -1,4 +1,4 @@
-import { deviceConsent, permissionView, connectorPermission } from "./autonomy.mjs";
+import { deviceConsent, permissionView, connectorPermission, ownerReportPermission, ownerReportPermissionView } from "./autonomy.mjs";
 import { SERVER_VERSION } from "./version.mjs";
 import { createServer as httpServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -171,6 +171,11 @@ export async function buildServer(opts = {}) {
         limit: Number(url.searchParams.get("limit") || 25), query: url.searchParams.get("query") || "" });
       if (req.method === "GET" && url.pathname === "/api/apps") return json(res, 200, store.appsPage(pageOptions(), null, Boolean(config.legacyUrl)));
       if (req.method === "GET" && url.pathname === "/api/permissions") return json(res, 200, permissionView(store, null));
+      if (req.method === "GET" && url.pathname === "/api/report-permissions") return json(res, 200, ownerReportPermissionView(store));
+      if (req.method === "PUT" && url.pathname === "/api/report-permissions") {
+        if (typeof body.app_id !== "string" || typeof body.connector_id !== "string") throw Error("invalid_report_permission");
+        return json(res, 200, await ownerReportPermission(store, body.app_id, body.connector_id, body));
+      }
       if (req.method === "GET" && url.pathname === "/api/activity") {
         const { items, ...meta } = store.page(Object.values(store.state.jobs).reverse().map(j => ({ id:j.id, name:j.action, app_id:j.app_id, connector_id:j.connector_id, state:j.state, authorization:j.authorization, created_at:j.created_at, updated_at:j.updated_at })), pageOptions());
         return json(res, 200, { activity:items, ...meta });
