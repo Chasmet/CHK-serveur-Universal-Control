@@ -3,7 +3,8 @@ const clean = (v, n) => String(v ?? '').trim().slice(0, n);
 export const BROWSER_NAME = 'CHK Agent Browser Android · Local 3';
 const key = connector => connector || 'owner';
 export const LESFAITS_NAME = 'LES FAITS — SYNC 30';
-const REPORT_ACTIONS = new Set(['lesfaits_create','lesfaits_attach','lesfaits_detach']);
+const REPORT_ACTIONS = new Set(['lesfaits_create','lesfaits_attach','lesfaits_detach','lesfaits_modifier','lesfaits_merge','lesfaits_archive','lesfaits_restore']);
+const REPORT_NEW_ACTIONS = new Set(['lesfaits_modifier','lesfaits_merge','lesfaits_archive','lesfaits_restore']);
 const reportApp = app => app?.name === LESFAITS_NAME;
 const allowedReportActions = app => app.capabilities.filter(c => c.readOnly === false && REPORT_ACTIONS.has(c.name)).map(c => c.name);
 
@@ -32,6 +33,8 @@ export function permitted(state, app, action, connector) {
   }
   if (!connector || !ordinaryAction(app,action) || grant?.enabled === false) return false;
   if (reportApp(app) && grant?.enabled === true && grant.source === 'owner_dashboard' && grant.actions?.includes(action)) return true;
+  // An existing generic consent must not silently expand to newly introduced report operations.
+  if (reportApp(app) && REPORT_NEW_ACTIONS.has(action)) return false;
   return state.connectors[connector]?.automatic_operations === true;
 
 }

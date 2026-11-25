@@ -26,3 +26,19 @@ test('owner consent is explicit, scoped, revocable and never grants delete',asyn
  s.connectors.c.app_ids=['b'];
  await assert.rejects(ownerReportPermission(store,'a','c',{enabled:true}),/invalid_report_connector_scope/);
 });
+
+test('new reversible report capabilities require consent, while permanent deletion remains blocked',async()=>{
+ const store=setup(),s=store.state,a=s.apps.a;
+ const actions=['lesfaits_modifier','lesfaits_merge','lesfaits_archive','lesfaits_restore'];
+ a.capabilities.push(...actions.map(name=>({name,readOnly:false})),{name:'lesfaits_delete',readOnly:false});
+ s.connectors.c.automatic_operations=true;
+ for(const action of actions)assert.equal(permitted(s,a,action,'c'),false);
+ await ownerReportPermission(store,'a','c',{enabled:true});
+ for(const action of actions){
+  assert.equal(permitted(s,a,action,'c'),true);
+  assert.equal(permitted(s,a,action,'d'),false);
+ }
+ assert.equal(permitted(s,a,'lesfaits_delete','c'),false);
+ await ownerReportPermission(store,'a','c',{enabled:false});
+ for(const action of actions)assert.equal(permitted(s,a,action,'c'),false);
+});
