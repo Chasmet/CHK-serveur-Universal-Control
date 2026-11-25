@@ -31,6 +31,7 @@ test('new reversible report capabilities require consent, while permanent deleti
  const store=setup(),s=store.state,a=s.apps.a;
  const actions=['lesfaits_modifier','lesfaits_merge','lesfaits_archive','lesfaits_restore'];
  a.capabilities.push(...actions.map(name=>({name,readOnly:false})),{name:'lesfaits_delete',readOnly:false});
+ s.connectors.c.automatic_operations=true;
  for(const action of actions)assert.equal(permitted(s,a,action,'c'),false);
  await ownerReportPermission(store,'a','c',{enabled:true});
  for(const action of actions){
