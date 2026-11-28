@@ -100,7 +100,7 @@ export async function buildServer(opts = {}) {
       return await store.markLegacy(id, { error: e.message, execution_state: "unknown", retry_command: false }, "unknown");
     }
   }
-  const mcp = createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto, markets, advancedMarket, monitor, appRouter.lesfaits);
+  const mcp = createMCP(config, store, security, ai, legacyCall, approveTask, godot, crypto, markets, advancedMarket, monitor, appRouter.lesfaits, appRouter.subtitles);
   const json = security.json;
   const server = httpServer(async (req, res) => {
     res.setHeader("x-content-type-options", "nosniff");

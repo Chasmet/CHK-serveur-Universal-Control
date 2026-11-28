@@ -50,7 +50,7 @@ namespace CHKUniversalControl
 
     sealed class MainPanel : Form
     {
-        const string Version = "1.0.10";
+        const string Version = "1.0.11";
         static readonly string Root = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CHKUniversalControl");
         static readonly string Runtime = Path.Combine(Root, "runtime-v" + Version);
@@ -680,7 +680,7 @@ namespace CHKUniversalControl
                         throw new Exception("Missing required files in packaged Windows executable");
                 }
             }
-            if(Version!="1.0.10")throw new Exception("Incorrect Windows launcher version");
+            if(Version!="1.0.11")throw new Exception("Incorrect Windows launcher version");
             if(!IsOwnRuntimeBinary(Root,Path.Combine(Root,"runtime-v1.0.4","node.exe"),"node.exe") ||
                IsOwnRuntimeBinary(Root,Path.Combine(Root,"other","node.exe"),"node.exe") ||
                IsOwnRuntimeBinary(Root,Path.Combine(Root,"runtime-v1.0.4","other.exe"),"node.exe") ||
