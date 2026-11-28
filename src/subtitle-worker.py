@@ -11,8 +11,20 @@ def row(s, e, text, words):
 def main():
     c = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     from faster_whisper.audio import decode_audio
+    import av
+    import numpy as np
     progress(1, "Décodage audio local")
+    with av.open(c["media"]) as container:
+        if not container.streams.audio:
+            raise ValueError("Aucune piste audio")
+        if container.duration is None or container.duration > 1800 * av.time_base:
+            raise ValueError("Durée inconnue ou supérieure à 30 minutes")
     audio = decode_audio(c["media"], sampling_rate=16000)
+    if len(audio) > 16000 * 1800:
+        raise ValueError("Audio supérieur à 30 minutes")
+    peaks = [round(float(np.max(np.abs(x))),4) if len(x) else 0 for x in np.array_split(audio, 500)]
+    wave = Path(c["waveform"]); tmp = wave.with_suffix(".tmp")
+    tmp.write_text(json.dumps({"available":True,"duration_ms":int(len(audio)*1000/16000),"peaks":peaks},allow_nan=False),encoding="utf-8");os.replace(tmp,wave)
     duration = int(len(audio) * 1000 / 16000)
     start = c["start_ms"]
     end = min(c["end_ms"] or duration, duration)
@@ -26,18 +38,25 @@ def main():
         segments = [{"start": r["start_ms"]/1000, "end": r["end_ms"]/1000, "text": r["text"]} for r in original]
         model, metadata = whisperx.load_align_model(language_code=c["language"], device="cpu")
         progress(20, "Alignement des paroles sur la voix")
-        aligned = whisperx.align(segments, model, metadata, audio, "cpu", return_char_alignments=False)
-        for seg in aligned["segments"]:
-            s = max(0, round(seg.get("start", 0)*1000))
-            e = min(duration, round(seg.get("end", 0)*1000))
+        # Preserve all original phrases, including those the aligner cannot align.
+        for idx, source in enumerate(original):
+            s = max(0, source["start_ms"])
+            e = min(duration, source["end_ms"])
+            if e <= s:
+                raise ValueError("Passage hors durée audio")
             words = []
-            for w in seg.get("words", []):
-                if "start" in w and "end" in w:
-                    a,b=round(w["start"]*1000),round(w["end"]*1000)
-                    if s <= a < b <= e:
-                        words.append({"start_ms":a,"end_ms":b,"text":w["word"],"confidence":w.get("score",0)})
-            if e > s and seg["text"].strip():
-                rows.append(row(s,e,seg["text"],words))
+            try:
+                aligned = whisperx.align([segments[idx]], model, metadata, audio, "cpu", return_char_alignments=False)
+                for seg in aligned.get("segments", []):
+                    for w in seg.get("words", []):
+                        if "start" in w and "end" in w:
+                            a,b=round(w["start"]*1000),round(w["end"]*1000)
+                            if s <= a < b <= e and w.get("word","").strip():
+                                words.append({"start_ms":a,"end_ms":b,"text":w["word"],"confidence":float(w.get("score",0))})
+            except (ValueError, RuntimeError):
+                words = []
+            rows.append(row(s,e,source["text"],words))
+            progress(min(98,20+int(78*(idx+1)/max(1,len(original)))),"Alignement des phrases")
         method = "whisperx_forced_alignment"
     else:
         from faster_whisper import WhisperModel

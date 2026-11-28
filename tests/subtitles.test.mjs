@@ -22,7 +22,11 @@ test("isolated connector, revision checks, manual inserts, undo and export",asyn
  assert.equal((await m.call("subtitle_edit",args,a)).revision,1);
  await assert.rejects(()=>m.call("subtitle_edit",args,a),/revision_conflict/);
  assert.equal((await m.call("subtitle_read",{project_id:p.project_id},a)).items[0].text,"Refrain");
- assert.equal((await m.call("subtitle_undo",{project_id:p.project_id,revision:1},a)).revision,2);
+ assert.equal((await m.call("subtitle_word_edit",{project_id:p.project_id,revision:1,phrase_index:0,action:"add",start_ms:64000,end_ms:64500,text:"Refrain"},a)).revision,2);
+ assert.equal((await m.call("subtitle_read",{project_id:p.project_id,mode:"word"},a)).items[0].start_ms,64000);
+ assert.equal((await m.call("subtitle_undo",{project_id:p.project_id,revision:2},a)).revision,3);
+ assert.equal((await m.call("subtitle_read",{project_id:p.project_id,mode:"word"},a)).total,0);
+ assert.equal((await m.call("subtitle_edit",{project_id:p.project_id,revision:3,operations:[{action:"remove",index:0}]},a)).revision,4);
  assert.equal((await m.call("subtitle_read",{project_id:p.project_id},a)).total,0);
  }finally{await rm(root,{recursive:true,force:true});}
 });

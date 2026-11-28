@@ -35,6 +35,8 @@ export const subtitleTools=[
  tool("subtitle_edit","Éditer un lot de passages à la révision attendue. Actions add, replace, remove, shift. Les horaires sont en millisecondes.",{...project,revision:I,operations:prop("array",{maxItems:100,items:{type:"object",properties:{action:prop("string",{enum:["add","replace","remove","shift"]}),index:I,start_ms:I,end_ms:I,text:P,delta_ms:I},required:["action"]}})},["project_id","revision","operations"],false),
  tool("subtitle_import","Importer des sous-titres SRT ou VTT existants; conserver une sauvegarde.",{...project,revision:I,text:P},["project_id","revision","text"],false),
  tool("subtitle_undo","Restaurer la précédente version des paroles, à la révision attendue.",{...project,revision:I},["project_id","revision"],false),
+ tool("subtitle_waveform","Lire les amplitudes réelles de l’audio après son analyse, pour repérer les silences et les attaques.",project,["project_id"]),
+ tool("subtitle_word_edit","Corriger le texte ou les horaires d’un mot dans une phrase, ajouter ou supprimer un mot. Aucune estimation fictive.",{...project,revision:I,phrase_index:I,word_index:I,action:prop("string",{enum:["add","replace","remove"]}),start_ms:I,end_ms:I,text:P},["project_id","revision","phrase_index","action"],false),
  tool("subtitle_audit","Vérifier chevauchements, trous, passages longs et mots non horodatés.",project,["project_id"]),
  tool("subtitle_export","Préparer les sous-titres SRT, VTT, TXT ou JSON (mots ou phrases) et un lien privé de téléchargement.",{...project,format:prop("string",{enum:["srt","vtt","txt","json"]}),mode:prop("string",{enum:["word","phrase"]})},["project_id","format"],false),
  tool("subtitle_listen","Ouvrir le lecteur audio sur un passage précis. Retourne aussi les paroles horodatées de la plage; ne prétend pas transmettre une écoute brute au modèle ChatGPT.",range,["project_id","start_ms","end_ms"],false)
@@ -88,8 +90,9 @@ export class SubtitlesModule {
  async withLock(dir,fn){if(this.locks.has(dir))throw Error("project_busy");this.locks.add(dir);try{return await fn();}finally{this.locks.delete(dir);}}
  async saveRows(dir,meta,rows,revision){
   if(meta.revision!==revision)throw Error("revision_conflict_reload_project");
-  if(rows.length>10000)throw Error("too_many_subtitles");
+  if(!Array.isArray(rows)||rows.length>10000)throw Error("invalid_or_too_many_subtitles");
   const duration=meta.duration_ms||86400000;
+  if(!Array.isArray(rows))throw Error("invalid_rows");
   rows=rows.map(r=>cleanRow(r,duration)).sort((a,b)=>a.start_ms-b.start_ms);
   await atomic(join(dir,"previous.json"),await this.rows(dir));await atomic(join(dir,"lyrics.json"),rows);
   meta.revision++;await atomic(join(dir,"project.json"),meta);return {ok:true,revision:meta.revision,phrases:rows.length,words:flatten(rows,"word").length};
@@ -121,7 +124,7 @@ export class SubtitlesModule {
   if(mode==="align"&&!(await this.rows(dir)).length)throw Error("import_or_transcribe_lyrics_first");
   const model=["large-v3","turbo","medium","small"].includes(args.model)?args.model:"large-v3";
   const language=args.language||"fr";if(!/^[a-z]{2,3}$/.test(language))throw Error("invalid_language");
-  const config={mode,model,language,vad:args.vad===true,start_ms:start,end_ms:end,media:join(dir,meta.media),input:join(dir,"lyrics.json"),output:join(dir,"candidate.json")};
+  const config={mode,model,language,vad:args.vad===true,start_ms:start,end_ms:end,media:join(dir,meta.media),waveform:join(dir,"waveform.json"),input:join(dir,"lyrics.json"),output:join(dir,"candidate.json")};
   await atomic(join(dir,"worker-config.json"),config);
   await rm(join(dir,"candidate.json"),{force:true});
   const job={state:"running",progress:0,message:"Chargement du moteur local",revision:meta.revision};this.running.set(dir,job);await atomic(join(dir,"job.json"),{state:"running",revision:meta.revision});
@@ -152,14 +155,16 @@ export class SubtitlesModule {
   if(name==="subtitle_project")return this.inspect(dir,meta);
   if(name==="subtitle_open")return {editor_url:this.link(owner,a.project_id)};
   if(name==="subtitle_read")return this.page(flatten(await this.rows(dir),a.mode),a);
+  if(name==="subtitle_waveform"){const data=await jsonFile(join(dir,"waveform.json"),null);return data||{available:false,reason:"Lance une transcription ou un alignement pour calculer la forme d’onde."};}
   if(name==="subtitle_job")return this.job(dir);
   if(name==="subtitle_candidate"){const c=await jsonFile(join(dir,"candidate.json"),null);if(!c)throw Error("no_candidate");return {...this.page(c.rows,a),duration_ms:c.duration_ms,method:c.method};}
   if(name==="subtitle_transcribe"||name==="subtitle_align")return this.withLock(dir,()=>this.start(dir,meta,a,name==="subtitle_align"?"align":"transcribe"));
   if(name==="subtitle_cancel"){const j=this.running.get(dir);if(!j)return {state:"not_running"};j.cancelled=true;j.child?.kill();return {state:"cancelling"};}
   if(name==="subtitle_listen"){const start=num(a.start_ms,0,86400000),end=num(a.end_ms,start+1,86400000);return {editor_url:this.link(owner,a.project_id,"&start="+start+"&end="+end),start_ms:start,end_ms:end,passages:(await this.rows(dir)).filter(r=>r.start_ms<end&&r.end_ms>start).slice(0,20),audio_preview:"Lecture dans CHK Browser, pas d'écoute brute dans le chat."};}
-  if(name==="subtitle_audit"){const rows=await this.rows(dir),issues=[];let last=0;for(let i=0;i<rows.length;i++){const r=rows[i];if(r.start_ms<last)issues.push({index:i,type:"overlap",ms:last-r.start_ms});if(r.start_ms-last>4000)issues.push({index:i,type:"gap_review",ms:r.start_ms-last});if(r.end_ms-r.start_ms>10000)issues.push({index:i,type:"long_phrase"});if(!r.words?.length)issues.push({index:i,type:"no_word_timing"});last=Math.max(last,r.end_ms);}return {count:issues.length,issues:issues.slice(0,100),note:"Un silence ou une instrumentale n'est pas nécessairement une erreur."};}
+  if(name==="subtitle_audit"){const rows=await this.rows(dir),issues=[];let last=0;for(let i=0;i<rows.length;i++){const r=rows[i];if(r.start_ms<last)issues.push({index:i,type:"overlap",ms:last-r.start_ms});if(r.start_ms-last>4000)issues.push({index:i,type:"gap_review",ms:r.start_ms-last});if(r.end_ms-r.start_ms>10000)issues.push({index:i,type:"long_phrase"});if(!r.words?.length)issues.push({index:i,type:"no_word_timing"});
+   else {const expected=r.text.trim().split(/\s+/).filter(Boolean).length;if(r.words.length<expected)issues.push({index:i,type:"incomplete_word_timing",timed:r.words.length,expected});const low=r.words.filter(w=>typeof w.confidence==="number"&&w.confidence<0.45).length;if(low)issues.push({index:i,type:"low_confidence_words",count:low});}last=Math.max(last,r.end_ms);}return {count:issues.length,issues:issues.slice(0,100),note:"Un silence ou une instrumentale n'est pas nécessairement une erreur."};}
   if(name==="subtitle_export"){if(!["srt","vtt","txt","json"].includes(a.format))throw Error("invalid_format");const text=exportText(await this.rows(dir),a.format,a.mode);const t=this.issue(owner,a.project_id);return {download_url:this.base+prefix+"/download?ticket="+t+"&format="+a.format+"&mode="+(a.mode==="word"?"word":"phrase"),bytes:Buffer.byteLength(text),format:a.format};}
-  if(["subtitle_edit","subtitle_import","subtitle_apply","subtitle_undo"].includes(name)){
+  if(["subtitle_edit","subtitle_import","subtitle_apply","subtitle_undo","subtitle_word_edit"].includes(name)){
    return this.withLock(dir,async()=>{
     const latest=(await this.load(owner,a.project_id)).meta;let rows=await this.rows(dir);
     if(name==="subtitle_import")rows=parseSubtitles(a.text);
@@ -168,6 +173,20 @@ export class SubtitlesModule {
      const candidate=await jsonFile(join(dir,"candidate.json"),null),j=await this.job(dir);if(!candidate||j.state!=="completed"||j.revision!==latest.revision)throw Error("candidate_missing_or_stale");
      latest.duration_ms=candidate.duration_ms||latest.duration_ms;
      rows=candidate.range?rows.filter(r=>r.end_ms<=candidate.range[0]||r.start_ms>=candidate.range[1]).concat(candidate.rows):candidate.rows;
+    }
+    if(name==="subtitle_word_edit"){
+     const phrase=rows[num(a.phrase_index,0,rows.length-1)],words=phrase.words||[];
+     if(a.action==="remove"){words.splice(num(a.word_index,0,words.length-1),1);}
+     else if(a.action==="add"||a.action==="replace"){
+      const old=a.action==="replace"?words[num(a.word_index,0,words.length-1)]:{};
+      const start_ms=num(a.start_ms??old.start_ms,phrase.start_ms,phrase.end_ms-1);
+      const end_ms=num(a.end_ms??old.end_ms,start_ms+1,phrase.end_ms);
+      const text=str(a.text??old.text,250).trim();if(!text)throw Error("empty_word");
+      const word={start_ms,end_ms,text};
+      if(a.action==="add")words.push(word);else words[a.word_index]=word;
+     }else throw Error("invalid_word_edit");
+     phrase.words=words.sort((a,b)=>a.start_ms-b.start_ms);
+     // Preserve phrase text; user can correct it independently if needed.
     }
     if(name==="subtitle_edit"){
      if(!Array.isArray(a.operations)||a.operations.length<1||a.operations.length>100)throw Error("invalid_operations");
@@ -191,7 +210,7 @@ export class SubtitlesModule {
   const t=req.headers["x-subtitle-ticket"]||url.searchParams.get("ticket");const session=this.tickets.get(t);
   if(!session||session.expires<Date.now())return json(res,401,{error:"expired_or_invalid_subtitle_session"});
   const {dir,meta}=await this.load(session.owner,session.projectId);
-  if(req.method==="GET"&&action==="/state")return json(res,200,{project:await this.inspect(dir,meta),rows:await this.rows(dir),job:await this.job(dir)});
+  if(req.method==="GET"&&action==="/state")return json(res,200,{project:await this.inspect(dir,meta),rows:await this.rows(dir),job:await this.job(dir),waveform:await jsonFile(join(dir,"waveform.json"),null)});
   if(req.method==="POST"&&action==="/upload")return this.withLock(dir,async()=>{
    if(this.running.has(dir)||meta.media)throw Error("media_already_present_or_busy");
    const size=num(body.size,1,maxMedia),offset=num(body.offset,0,size),ext=extname(str(body.filename,255)).toLowerCase();
@@ -206,6 +225,7 @@ export class SubtitlesModule {
    if(offset+buffer.length===size){meta.media="original"+ext;await rename(part,join(dir,meta.media));await atomic(join(dir,"project.json"),meta);await rm(join(dir,"upload.json"),{force:true});}
    return json(res,200,{received:offset+buffer.length,complete:Boolean(meta.media)});
   });
+  if(req.method==="POST"&&action==="/upload-reset")return this.withLock(dir,async()=>{if(meta.media||this.running.has(dir))throw Error("media_already_present_or_busy");await rm(join(dir,"upload.part"),{force:true});await rm(join(dir,"upload.json"),{force:true});return json(res,200,{ok:true});});
   if(req.method==="POST"&&action==="/edit")return this.withLock(dir,async()=>{const latest=(await this.load(session.owner,session.projectId)).meta;return json(res,200,await this.saveRows(dir,latest,body.rows,body.revision));});
   if(req.method==="POST"&&action==="/import")return this.withLock(dir,async()=>json(res,200,await this.saveRows(dir,(await this.load(session.owner,session.projectId)).meta,parseSubtitles(body.text),body.revision)));
   if(req.method==="GET"&&action==="/download"){const format=url.searchParams.get("format");if(!["srt","vtt","txt","json"].includes(format))throw Error("invalid_format");const content=exportText(await this.rows(dir),format,url.searchParams.get("mode"));res.writeHead(200,{"content-type":"application/octet-stream","content-disposition":"attachment; filename=\"subtitles."+format+"\"","cache-control":"no-store"});return res.end(content);}
